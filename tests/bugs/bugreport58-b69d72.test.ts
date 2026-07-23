@@ -25,7 +25,9 @@ const routeTouchesPoint = (
   )
 
 test("bugreport58 stitch keeps source_net_2_mst21 connected", () => {
-  const solver = new AutoroutingPipelineSolver(structuredClone(srj))
+  const solver = new AutoroutingPipelineSolver(structuredClone(srj), {
+    cacheProvider: null,
+  })
 
   solver.solveUntilPhase("traceSimplificationSolver")
 
@@ -49,7 +51,9 @@ test("bugreport58 stitch keeps source_net_2_mst21 connected", () => {
 }, 120_000)
 
 test("bugreport58-b69d72.json", () => {
-  const solver = new AutoroutingPipelineSolver(structuredClone(srj))
+  const solver = new AutoroutingPipelineSolver(structuredClone(srj), {
+    cacheProvider: null,
+  })
   solver.solve()
   expect(getLastStepSvg(solver.visualize())).toMatchSvgSnapshot(snapshotPath)
 }, 120_000)

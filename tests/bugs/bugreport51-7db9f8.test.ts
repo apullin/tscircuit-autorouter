@@ -13,7 +13,7 @@ const snapshotPath =
     : import.meta.path
 
 test("bugreport51-7db9f8.json", () => {
-  const solver = new AutoroutingPipelineSolver(srj)
+  const solver = new AutoroutingPipelineSolver(srj, { cacheProvider: null })
   solver.solve()
   expect(getLastStepSvg(solver.visualize())).toMatchSvgSnapshot(snapshotPath)
 }, 120_000)
