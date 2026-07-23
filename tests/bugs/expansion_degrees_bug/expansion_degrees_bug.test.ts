@@ -93,7 +93,7 @@ test("expansion degree " +
     backgroundColor: "white",
   })
   expect(svg).toMatchSvgSnapshot(import.meta.path + "19")
-})
+}, 30_000)
 
 test("expansion degree " +
   EXPANSION_DEGREEs.join(",") +

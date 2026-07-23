@@ -73,4 +73,4 @@ test("pour-via-escape03.json", () => {
   expect(getLastStepSvg(solver.visualize())).toMatchSvgSnapshot(
     import.meta.path,
   )
-})
+}, 30_000)

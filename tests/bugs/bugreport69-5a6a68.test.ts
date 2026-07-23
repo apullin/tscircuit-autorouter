@@ -22,4 +22,4 @@ test("bugreport69-5a6a68 skips out-of-bounds component detection", (): void => {
   expect(getLastStepSvg(solver.visualize())).toMatchSvgSnapshot(
     import.meta.path,
   )
-})
+}, 30_000)

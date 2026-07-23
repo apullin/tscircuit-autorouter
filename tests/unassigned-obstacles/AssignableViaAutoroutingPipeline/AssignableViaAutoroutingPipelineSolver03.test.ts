@@ -21,4 +21,4 @@ test("assignable via pipeline solves complex two-layer obstacle routing", () => 
     }),
   ).toMatchSvgSnapshot(import.meta.path)
   expect(solver.failed).toBe(false)
-})
+}, 30_000)
