@@ -226,3 +226,33 @@ test("PortfolioSingleIntraNodeSolver does not apply the single-layer candidate t
   expect(solver.failed).toBe(true)
   expect(String(solver.error)).toContain("not applicable")
 })
+
+test("PortfolioSingleIntraNodeSolver uses only closed-form candidates for one layer transition", () => {
+  const solver = new PortfolioSingleIntraNodeSolver({
+    nodeWithPortPoints: {
+      capacityMeshNodeId: "single-transition",
+      center: { x: 0, y: 0 },
+      width: 3,
+      height: 2,
+      availableZ: [0, 1, 2, 5],
+      portPoints: [
+        { connectionName: "conn", x: -1, y: 0, z: 5 },
+        { connectionName: "conn", x: 1, y: 0, z: 0 },
+      ],
+    },
+    traceWidth: 0.15,
+    viaDiameter: 0.3,
+    effort: 1,
+  })
+
+  solver.solve()
+
+  expect(solver.solved).toBe(true)
+  expect(solver.failed).toBe(false)
+  expect(solver.stats.singleTransitionFastPath).toBe(true)
+  expect(solver.supervisedSolvers).toHaveLength(2)
+  expect(solver.solvedRoutes).toHaveLength(1)
+  expect(solver.solvedRoutes[0]!.route.map((point) => point.z)).toEqual([
+    5, 5, 0, 0,
+  ])
+})

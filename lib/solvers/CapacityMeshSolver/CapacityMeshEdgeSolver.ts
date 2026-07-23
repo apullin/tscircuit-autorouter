@@ -17,7 +17,10 @@ export class CapacityMeshEdgeSolver extends BaseSolver {
   /** Only used for visualization, dynamically instantiated if necessary */
   nodeMap?: Map<CapacityMeshNodeId, CapacityMeshNode>
 
-  constructor(public nodes: CapacityMeshNode[]) {
+  constructor(
+    public nodes: CapacityMeshNode[],
+    public viaDiameter?: number,
+  ) {
     super()
     this.edges = []
   }
@@ -37,7 +40,11 @@ export class CapacityMeshEdgeSolver extends BaseSolver {
             this.nodes[j]._strawParentCapacityMeshNodeId
         if (
           !strawNodesWithSameParent &&
-          areNodesBordering(this.nodes[i], this.nodes[j]) &&
+          (areNodesBordering(this.nodes[i], this.nodes[j]) ||
+            this.doNodesHaveViaAccessOverlap(
+              this.nodes[i],
+              this.nodes[j],
+            )) &&
           this.doNodesHaveSharedLayer(this.nodes[i], this.nodes[j])
         ) {
           this.edges.push({
@@ -139,6 +146,42 @@ export class CapacityMeshEdgeSolver extends BaseSolver {
       n1Right + epsilon >= n2Left &&
       n1Top <= n2Bottom + epsilon &&
       n1Bottom + epsilon >= n2Top
+    )
+  }
+
+  doNodesHaveViaAccessOverlap(
+    node1: CapacityMeshNode,
+    node2: CapacityMeshNode,
+  ): boolean {
+    if (this.viaDiameter === undefined) return false
+    const node1IsFree = !node1._containsObstacle && !node1._containsTarget
+    const node2IsFree = !node2._containsObstacle && !node2._containsTarget
+    const hasViaAccessPair =
+      ((node1._isViaAccess || node1._isViaPortal) && node2IsFree) ||
+      ((node2._isViaAccess || node2._isViaPortal) && node1IsFree)
+    if (!hasViaAccessPair) return false
+
+    const xOverlap =
+      Math.min(
+        node1.center.x + node1.width / 2,
+        node2.center.x + node2.width / 2,
+      ) -
+      Math.max(
+        node1.center.x - node1.width / 2,
+        node2.center.x - node2.width / 2,
+      )
+    const yOverlap =
+      Math.min(
+        node1.center.y + node1.height / 2,
+        node2.center.y + node2.height / 2,
+      ) -
+      Math.max(
+        node1.center.y - node1.height / 2,
+        node2.center.y - node2.height / 2,
+      )
+    return (
+      xOverlap + 1e-6 >= this.viaDiameter &&
+      yOverlap + 1e-6 >= this.viaDiameter
     )
   }
 

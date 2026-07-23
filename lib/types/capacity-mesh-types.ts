@@ -33,6 +33,8 @@ export interface CapacityMeshNode {
   _isNarrowQfpPadGap?: boolean
   _soicRegionType?: "center" | "pad" | "pad-gap"
   _isComponentTopologyNode?: boolean
+  _isViaAccess?: boolean
+  _isViaPortal?: boolean
   _connectedTo?: string[]
 
   _parent?: CapacityMeshNode

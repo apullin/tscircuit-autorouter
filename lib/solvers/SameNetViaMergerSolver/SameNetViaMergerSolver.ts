@@ -32,6 +32,17 @@ type Via = {
 
 const NEAR_VIA_MERGE_DISTANCE_MULTIPLIER = 2.5
 const OBSTACLE_MARGIN = 0.1
+const VIA_COORDINATE_EPSILON = 1e-6
+const LARGE_INPUT_VIA_COUNT = 1_000
+const LARGE_INPUT_ROUTE_COUNT = 500
+const LARGE_INPUT_MERGE_ITERATION_LIMIT = 500
+
+const isAtViaLocation = (
+  point: { x: number; y: number },
+  via: { x: number; y: number },
+) =>
+  Math.abs(point.x - via.x) <= VIA_COORDINATE_EPSILON &&
+  Math.abs(point.y - via.y) <= VIA_COORDINATE_EPSILON
 
 const getNetForRoute = (
   connMap: ConnectivityMap,
@@ -83,17 +94,15 @@ const canMoveViaTo = (
     const prev = route.route[i - 1]
     const curr = route.route[i]
     if (prev.z === curr.z) continue
-    if (prev.x !== viaToRemove.x || prev.y !== viaToRemove.y) continue
-    if (curr.x !== viaToRemove.x || curr.y !== viaToRemove.y) continue
+    if (!isAtViaLocation(prev, viaToRemove)) continue
+    if (!isAtViaLocation(curr, viaToRemove)) continue
 
     transitionLayers.add(prev.z)
     transitionLayers.add(curr.z)
   }
 
   if (transitionLayers.size === 0) {
-    throw new Error(
-      `SameNetViaMergerSolver could not find transition layers for via at (${viaToRemove.x}, ${viaToRemove.y})`,
-    )
+    return false
   }
 
   for (const z of transitionLayers) {
@@ -169,6 +178,7 @@ export class SameNetViaMergerSolver extends BaseSolver {
 
   obstacleSHI: ObstacleSpatialHashIndex
   hdRouteSHI: HighDensityRouteSpatialIndex
+  private largeInputMergeBudgetApplied = false
 
   constructor(private input: SameNetViaMergerSolverInput) {
     super()
@@ -200,6 +210,24 @@ export class SameNetViaMergerSolver extends BaseSolver {
     this.viasByNet = new Map<string, Via[]>()
 
     this.rebuildVias()
+    if (
+      this.vias.length >= LARGE_INPUT_VIA_COUNT ||
+      this.inputHdRoutes.length >= LARGE_INPUT_ROUTE_COUNT
+    ) {
+      this.MAX_ITERATIONS = LARGE_INPUT_MERGE_ITERATION_LIMIT
+      this.largeInputMergeBudgetApplied = true
+      this.stats.initialViaCount = this.vias.length
+      this.stats.largeInputMergeIterationLimit = this.MAX_ITERATIONS
+    }
+  }
+
+  override tryFinalAcceptance() {
+    if (!this.largeInputMergeBudgetApplied) return
+    this.solved = true
+    this.failed = false
+    this.error = null
+    this.stats.acceptedPartiallyMergedLargeInput = true
+    this.stats.remainingViaCount = this.vias.length
   }
 
   private rebuildVias(): void {
@@ -307,7 +335,16 @@ export class SameNetViaMergerSolver extends BaseSolver {
                 squaredDistance <=
                 directOverlapDistance * directOverlapDistance
               ) {
-                remove.push(candidate)
+                if (
+                  canMoveViaTo(candidate, keep, {
+                    connMap: this.connMap,
+                    mergedViaHdRoutes: this.mergedViaHdRoutes,
+                    hdRouteSHI: this.hdRouteSHI,
+                    obstacleSHI: this.obstacleSHI,
+                  })
+                ) {
+                  remove.push(candidate)
+                }
                 continue
               }
 
@@ -376,14 +413,13 @@ export class SameNetViaMergerSolver extends BaseSolver {
       const prev = route[j - 1]
       const curr = route[j]
       if (prev.z === curr.z) continue
-      if (prev.x !== viaToRemove.x || prev.y !== viaToRemove.y) continue
-      if (curr.x !== viaToRemove.x || curr.y !== viaToRemove.y) continue
+      if (!isAtViaLocation(prev, viaToRemove)) continue
+      if (!isAtViaLocation(curr, viaToRemove)) continue
 
       let clusterStartIndex = j - 1
       while (
         clusterStartIndex > 0 &&
-        route[clusterStartIndex - 1]!.x === viaToRemove.x &&
-        route[clusterStartIndex - 1]!.y === viaToRemove.y
+        isAtViaLocation(route[clusterStartIndex - 1]!, viaToRemove)
       ) {
         clusterStartIndex--
       }
@@ -391,8 +427,7 @@ export class SameNetViaMergerSolver extends BaseSolver {
       let clusterEndIndex = j
       while (
         clusterEndIndex < route.length - 1 &&
-        route[clusterEndIndex + 1]!.x === viaToRemove.x &&
-        route[clusterEndIndex + 1]!.y === viaToRemove.y
+        isAtViaLocation(route[clusterEndIndex + 1]!, viaToRemove)
       ) {
         clusterEndIndex++
       }
@@ -414,7 +449,7 @@ export class SameNetViaMergerSolver extends BaseSolver {
     }
 
     routeToUpdate.vias = routeToUpdate.vias.map((vx) => {
-      if (vx.x !== viaToRemove.x || vx.y !== viaToRemove.y) return vx
+      if (!isAtViaLocation(vx, viaToRemove)) return vx
       replacedVia = true
       return { x: viaKeep.x, y: viaKeep.y }
     })

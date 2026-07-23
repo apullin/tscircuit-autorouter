@@ -16,7 +16,6 @@ import { mapLayerNameToZ } from "lib/utils/mapLayerNameToZ"
 import {
   DuplicateCongestedPortSolver,
   orderConnectionsByNetCardinality,
-  SelectiveReripTinyHyperGraphSolver,
   type DuplicateCongestedPortSolverReport,
   TinyHyperGraphSectionPipelineSolver,
   TinyHyperGraphSectionSolver,
@@ -32,6 +31,7 @@ import type {
 } from "../hgportpointpathingsolver/types"
 import { createTinyRouteNetIndexer } from "./createTinyRouteNetIndexer"
 import { getRegionNetIdByRegionId } from "./getRegionNetIdByRegionId"
+import { LargeProblemSelectiveReripSolver } from "./LargeProblemSelectiveReripSolver"
 
 type RouteMetadata = {
   connectionId: string
@@ -651,7 +651,7 @@ class TinyHyperGraphSectionPipelineWithTerminalNetIds extends TinyHyperGraphSect
           "Tiny hypergraph pipeline is missing the solveGraph stage",
         )
       }
-      solveGraphStep.solverClass = SelectiveReripTinyHyperGraphSolver
+      solveGraphStep.solverClass = LargeProblemSelectiveReripSolver
     }
     this.MAX_ITERATIONS = getTinyHyperGraphPipelineMaxIterations(inputProblem)
   }
@@ -697,7 +697,7 @@ class TinyHyperGraphSectionPipelineWithTerminalNetIds extends TinyHyperGraphSect
       const { topology, problem } = this.loadHyperGraph(
         this.inputProblem.serializedHyperGraph,
       )
-      this.initialVisualizationSolver = new SelectiveReripTinyHyperGraphSolver(
+      this.initialVisualizationSolver = new LargeProblemSelectiveReripSolver(
         topology,
         problem,
         this.getSolveGraphOptions(),
@@ -807,6 +807,11 @@ export class TinyHypergraphPortPointPathingSolver extends BaseSolver {
     HgPortPointPathingSolverParams["graph"]["regions"][number]
   >
   private originalRegionIds: Set<CapacityMeshNodeId>
+  private solvedOutputCache?: {
+    nodesWithPortPoints: NodeWithPortPoints[]
+    inputNodeWithPortPoints: InputNodeWithPortPoints[]
+  }
+  private solvedNodeByIdCache?: Map<CapacityMeshNodeId, NodeWithPortPoints>
 
   constructor(private params: HgPortPointPathingSolverParams) {
     super()
@@ -1016,6 +1021,8 @@ export class TinyHypergraphPortPointPathingSolver extends BaseSolver {
     nodesWithPortPoints: NodeWithPortPoints[]
     inputNodeWithPortPoints: InputNodeWithPortPoints[]
   } {
+    if (this.solvedOutputCache) return this.solvedOutputCache
+
     const solvedTinySolver = this.getSolvedTinySolver()
     const nodesWithPortPoints: NodeWithPortPoints[] = []
     const regionSegments = solvedTinySolver.state.regionSegments
@@ -1066,16 +1073,26 @@ export class TinyHypergraphPortPointPathingSolver extends BaseSolver {
       })
     }
 
-    return {
+    const output = {
       nodesWithPortPoints,
       inputNodeWithPortPoints: this.inputNodeWithPortPoints,
     }
+    if (this.solved) {
+      this.solvedOutputCache = output
+      this.solvedNodeByIdCache = new Map(
+        nodesWithPortPoints.map((node) => [node.capacityMeshNodeId, node]),
+      )
+    }
+    return output
   }
 
   computeNodePf(node: InputNodeWithPortPoints): number | null {
-    const solvedNode = this.getOutput().nodesWithPortPoints.find(
-      (candidate) => candidate.capacityMeshNodeId === node.capacityMeshNodeId,
-    )
+    const output = this.getOutput()
+    const solvedNode =
+      this.solvedNodeByIdCache?.get(node.capacityMeshNodeId) ??
+      output.nodesWithPortPoints.find(
+        (candidate) => candidate.capacityMeshNodeId === node.capacityMeshNodeId,
+      )
     const originalRegion = this.originalRegionById.get(node.capacityMeshNodeId)
 
     if (!solvedNode || !originalRegion) {

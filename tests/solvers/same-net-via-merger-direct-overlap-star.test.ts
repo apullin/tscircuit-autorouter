@@ -44,3 +44,70 @@ test("SameNetViaMergerSolver consolidates a chain within the near-merge radius",
     { x: 0, y: 0 },
   ])
 })
+
+test("SameNetViaMergerSolver tolerates rounded via coordinates", () => {
+  const roundedRoute = makeViaRoute("route-a", 0)
+  roundedRoute.route = roundedRoute.route.map((point) => ({
+    ...point,
+    x: point.x + 5e-7,
+  }))
+  const solver = new SameNetViaMergerSolver({
+    inputHdRoutes: [roundedRoute, makeViaRoute("route-b", 0.25)],
+    obstacles: [],
+    colorMap: {},
+    layerCount: 2,
+    connMap: new ConnectivityMap({ net0: ["route-a", "route-b"] }),
+  })
+
+  solver.solve()
+
+  expect(solver.failed).toBe(false)
+  expect(solver.getMergedViaHdRoutes()?.flatMap((route) => route.vias)).toEqual([
+    { x: 0, y: 0 },
+    { x: 0, y: 0 },
+  ])
+})
+
+test("SameNetViaMergerSolver skips a stale via without a route transition", () => {
+  const staleViaRoute = makeViaRoute("route-a", 0)
+  staleViaRoute.route = [
+    { x: 1, y: 0, z: 0 },
+    { x: 1, y: 0, z: 1 },
+  ]
+  const solver = new SameNetViaMergerSolver({
+    inputHdRoutes: [staleViaRoute, makeViaRoute("route-b", 0.25)],
+    obstacles: [],
+    colorMap: {},
+    layerCount: 2,
+    connMap: new ConnectivityMap({ net0: ["route-a", "route-b"] }),
+  })
+
+  solver.solve()
+
+  expect(solver.failed).toBe(false)
+  expect(solver.getMergedViaHdRoutes()?.[0]?.vias).toEqual([{ x: 0, y: 0 }])
+})
+
+test("SameNetViaMergerSolver accepts a partially merged large input at its budget", () => {
+  const connectionNames = Array.from(
+    { length: 500 },
+    (_, index) => `route-${index}`,
+  )
+  const solver = new SameNetViaMergerSolver({
+    inputHdRoutes: connectionNames.map((connectionName, index) =>
+      makeViaRoute(connectionName, index * 0.25),
+    ),
+    obstacles: [],
+    colorMap: {},
+    layerCount: 2,
+    connMap: new ConnectivityMap({ net0: connectionNames }),
+  })
+
+  expect(solver.MAX_ITERATIONS).toBe(500)
+  solver.iterations = solver.MAX_ITERATIONS
+  solver.step()
+
+  expect(solver.solved).toBe(true)
+  expect(solver.failed).toBe(false)
+  expect(solver.stats.acceptedPartiallyMergedLargeInput).toBe(true)
+})

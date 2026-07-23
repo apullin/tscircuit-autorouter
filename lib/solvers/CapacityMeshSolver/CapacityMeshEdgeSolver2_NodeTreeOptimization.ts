@@ -18,8 +18,8 @@ export class CapacityMeshEdgeSolver2_NodeTreeOptimization extends CapacityMeshEd
   private currentNodeIndex: number
   private edgeSet: Set<string>
 
-  constructor(public nodes: CapacityMeshNode[]) {
-    super(nodes)
+  constructor(public nodes: CapacityMeshNode[], viaDiameter?: number) {
+    super(nodes, viaDiameter)
     this.MAX_ITERATIONS = 10e6
     this.nodeTree = new CapacityNodeTree(this.nodes)
     this.currentNodeIndex = 0
@@ -43,7 +43,8 @@ export class CapacityMeshEdgeSolver2_NodeTreeOptimization extends CapacityMeshEd
 
     for (const B of maybeAdjNodes) {
       const areBordering = areNodesBordering(A, B)
-      if (!areBordering) continue
+      const haveViaAccessOverlap = this.doNodesHaveViaAccessOverlap(A, B)
+      if (!areBordering && !haveViaAccessOverlap) continue
       const strawNodesWithSameParent =
         A._strawNode &&
         B._strawNode &&

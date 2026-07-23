@@ -21,6 +21,7 @@ import {
   SupervisedSolver,
 } from "../HyperParameterSupervisorSolver"
 import { repairDisconnectedSameRootPortPoints } from "./repairDisconnectedSameRootPortPoints"
+import { getConnectionPortPointPairs } from "lib/utils/getConnectionPortPointPairs"
 
 // Match the existing six-ordering portfolio used by the other intra-node
 // solver. The first ordering remains in the normal portfolio; the remaining
@@ -304,6 +305,49 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
   }
 
   override initializeSolvers() {
+    const connectionGroups = new Map<string, typeof this.nodeWithPortPoints.portPoints>()
+    for (const portPoint of this.nodeWithPortPoints.portPoints) {
+      const points = connectionGroups.get(portPoint.connectionName) ?? []
+      points.push(portPoint)
+      connectionGroups.set(portPoint.connectionName, points)
+    }
+    const routePairs = [...connectionGroups.values()].flatMap((points) =>
+      getConnectionPortPointPairs(points),
+    )
+    const singleRoutePair = routePairs.length === 1 ? routePairs[0] : undefined
+
+    if (
+      singleRoutePair &&
+      singleRoutePair[0].z !== undefined &&
+      singleRoutePair[1].z !== undefined &&
+      singleRoutePair[0].z !== singleRoutePair[1].z
+    ) {
+      const fastPathCandidates = [
+        {
+          hyperParameters: { THROUGH_OBSTACLE: true },
+          solver: this.generateSolver({ THROUGH_OBSTACLE: true }),
+        },
+        {
+          hyperParameters: { CLOSED_FORM_SINGLE_TRANSITION: true },
+          solver: this.generateSolver({
+            CLOSED_FORM_SINGLE_TRANSITION: true,
+          }),
+        },
+      ]
+      this.supervisedSolvers = fastPathCandidates.map(
+        ({ hyperParameters, solver }) => {
+          this.initializeCandidateBudget(solver)
+          const g = this.computeG(solver)
+          return { hyperParameters, solver, h: 0, g, f: g }
+        },
+      )
+      this.stats.singleTransitionFastPath = true
+      this.stats.dynamicExpansionWorkBudget =
+        this.getDynamicExpansionWorkBudget()
+      this.refreshDynamicIterationLimit()
+      return
+    }
+
     super.initializeSolvers()
     for (const { solver } of this.supervisedSolvers ?? []) {
       this.initializeCandidateBudget(solver)

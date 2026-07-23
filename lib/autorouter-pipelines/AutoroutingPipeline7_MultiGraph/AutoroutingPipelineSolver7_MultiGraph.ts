@@ -69,6 +69,7 @@ import { PreprocessSimpleRouteJsonSolver } from "../AutoroutingPipeline4_TinyHyp
 import { MergedComponentTopologyView } from "./MergedComponentTopologyView"
 import { convertPipeline7HdRoutesToSimplifiedPcbTraces } from "./convertPipeline7HdRoutesToSimplifiedPcbTraces"
 import { createPipeline7RelaxedDrcEvaluator } from "./create-pipeline7-relaxed-drc-evaluator"
+import { BoundedGlobalDrcBranchPortfolioSolver } from "./BoundedGlobalDrcBranchPortfolioSolver"
 import { lockHdRouteTerminals } from "./lock-hd-route-terminals"
 
 interface CapacityMeshSolverOptions {
@@ -106,6 +107,70 @@ function getComponentCapacityMeshNodeIds(
     (capacityMeshNodes ?? [])
       .filter((node) => node._isComponentTopologyNode)
       .map((node) => node.capacityMeshNodeId),
+  )
+}
+
+function getUndetectedDenseComponentBounds(
+  obstacles: SimpleRouteJson["obstacles"],
+  detectedComponentIds: ReadonlySet<string>,
+  connections: SimpleRouteJson["connections"],
+): SimpleRouteJson["bounds"][] {
+  const obstaclesByComponentId = new Map<
+    string,
+    SimpleRouteJson["obstacles"]
+  >()
+  for (const obstacle of obstacles) {
+    if (!obstacle.componentId) continue
+    const componentObstacles =
+      obstaclesByComponentId.get(obstacle.componentId) ?? []
+    componentObstacles.push(obstacle)
+    obstaclesByComponentId.set(obstacle.componentId, componentObstacles)
+  }
+
+  return [...obstaclesByComponentId.entries()].flatMap(
+    ([componentId, componentObstacles]) => {
+      if (
+        detectedComponentIds.has(componentId) ||
+        componentObstacles.length < 90
+      ) {
+        return []
+      }
+      const bounds: SimpleRouteJson["bounds"] = {
+        minX: Infinity,
+        maxX: -Infinity,
+        minY: Infinity,
+        maxY: -Infinity,
+      }
+      for (const obstacle of componentObstacles) {
+        const obstacleBounds = {
+          minX: obstacle.center.x - obstacle.width / 2,
+          maxX: obstacle.center.x + obstacle.width / 2,
+          minY: obstacle.center.y - obstacle.height / 2,
+          maxY: obstacle.center.y + obstacle.height / 2,
+        }
+        bounds.minX = Math.min(bounds.minX, obstacleBounds.minX)
+        bounds.maxX = Math.max(bounds.maxX, obstacleBounds.maxX)
+        bounds.minY = Math.min(bounds.minY, obstacleBounds.minY)
+        bounds.maxY = Math.max(bounds.maxY, obstacleBounds.maxY)
+      }
+      const terminalLayers = new Set(
+        connections.flatMap((connection) =>
+          connection.pointsToConnect
+            .filter(
+              (point) =>
+                point.x >= bounds.minX &&
+                point.x <= bounds.maxX &&
+                point.y >= bounds.minY &&
+                point.y <= bounds.maxY,
+            )
+            .flatMap((point) =>
+              "layers" in point ? point.layers : [point.layer],
+            ),
+        ),
+      )
+      if (terminalLayers.size < 2) return []
+      return [bounds]
+    },
   )
 }
 
@@ -373,6 +438,17 @@ export class AutoroutingPipelineSolver7_MultiGraph extends BaseSolver {
         cms.maxNodeDimension,
         cms.maxNodeRatio,
         cms.minNodeArea,
+        cms.srj.layerCount,
+        cms.viaDiameter,
+        getUndetectedDenseComponentBounds(
+          cms.srj.obstacles,
+          new Set(
+            cms.componentDetectionSolver!
+              .getOutput()
+              .map(({ componentId }) => componentId),
+          ),
+          cms.srjWithPointPairs!.connections,
+        ),
       ],
       {
         onSolved: (cms) => {
@@ -383,7 +459,7 @@ export class AutoroutingPipelineSolver7_MultiGraph extends BaseSolver {
     definePipelineStep(
       "edgeSolver",
       CapacityMeshEdgeSolver2_NodeTreeOptimization,
-      (cms) => [cms.capacityNodes!],
+      (cms) => [cms.capacityNodes!, cms.viaDiameter],
       {
         onSolved: (cms) => {
           cms.capacityEdges = cms.edgeSolver?.edges!
@@ -523,11 +599,15 @@ export class AutoroutingPipelineSolver7_MultiGraph extends BaseSolver {
       const nodePortPointsSource =
         uniformNodes.length > 0 ? uniformNodes : fallbackNodes
 
-      cms.highDensityNodePortPoints = structuredClone(nodePortPointsSource)
+      // HighDensitySolver consumes the outer array with pop(), but treats the
+      // nodes themselves as read-only. Preserve the source array for the
+      // force-improvement and repair stages without deeply cloning thousands
+      // of nodes and port points.
+      cms.highDensityNodePortPoints = nodePortPointsSource
 
       return [
         {
-          nodePortPoints: nodePortPointsSource,
+          nodePortPoints: [...nodePortPointsSource] as NodeWithPortPoints[],
           nodePfById: new Map(
             (
               cms.portPointPathingSolver?.getOutput().inputNodeWithPortPoints ??
@@ -662,7 +742,7 @@ export class AutoroutingPipelineSolver7_MultiGraph extends BaseSolver {
     ),
     definePipelineStep(
       "exactGeometryDrcForceImproveSolver",
-      GlobalDrcBranchPortfolioSolver,
+      BoundedGlobalDrcBranchPortfolioSolver,
       (cms) => {
         const relaxedDrcEvaluator = createPipeline7RelaxedDrcEvaluator({
           connections: cms.netToPointPairsSolver?.newConnections ?? [],

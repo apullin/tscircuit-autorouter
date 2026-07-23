@@ -27,6 +27,10 @@ import type {
   MultiGraphTopologyPlannerSolverParams,
   SerializedTopologyComponentInput,
 } from "./MultiGraphTopologyPlannerSolver"
+import {
+  findNestedBgaTopologyComponents,
+  getTopologyObstacleKey,
+} from "./find-nested-bga-topology-components"
 
 export interface NormalizedTopologyPlannerInput {
   globalNoConnectionSrj: SimpleRouteJson
@@ -101,11 +105,17 @@ export function createComponentSrj({
     }),
     obstacleBounds,
   )
+  const memberObstacleIds = new Set(component.memberObstacleIds)
   const componentObstacles = inputSrj.obstacles
     .filter((obstacle) =>
       doBoundsOverlap(getBoundingBox(obstacle), componentBounds),
     )
-    .map((obstacle) => ({ ...obstacle }))
+    .map((obstacle) => ({
+      ...obstacle,
+      ...(memberObstacleIds.has(getTopologyObstacleKey(obstacle))
+        ? { componentId: component.componentId }
+        : {}),
+    }))
 
   return {
     ...structuredClone(inputSrj),
@@ -123,7 +133,19 @@ export function normalizeInput(
     detectedComponents,
     inputSrj: input.inputSrj,
   })
-  const globalNoConnectionSrj =
+  const shouldFindNestedBgas =
+    input.components === undefined &&
+    input.globalNoConnectionSrj === undefined &&
+    input.brokenSrj === undefined
+  const nestedBgaComponents = shouldFindNestedBgas
+    ? findNestedBgaTopologyComponents({
+        inputSrj: input.inputSrj,
+        excludedComponentIds: new Set(
+          detectedComponents.map(({ componentId }) => componentId),
+        ),
+      })
+    : []
+  const baseGlobalNoConnectionSrj =
     input.globalNoConnectionSrj ??
     (detectedComponents.length > 0
       ? createComponentObstacleSrj({
@@ -132,11 +154,26 @@ export function normalizeInput(
         })
       : input.inputSrj) ??
     input.brokenSrj?.componentsAsObstaclesSrj
+  const nestedMemberObstacleIds = new Set(
+    nestedBgaComponents.flatMap((component) => component.memberObstacleIds),
+  )
+  const globalNoConnectionSrj =
+    nestedBgaComponents.length === 0
+      ? baseGlobalNoConnectionSrj
+      : {
+          ...baseGlobalNoConnectionSrj,
+          obstacles: [
+            ...baseGlobalNoConnectionSrj.obstacles.filter(
+              (obstacle) =>
+                !nestedMemberObstacleIds.has(getTopologyObstacleKey(obstacle)),
+            ),
+            ...nestedBgaComponents.map(
+              (component) => component.replacementObstacle,
+            ),
+          ],
+        }
   const components =
-    input.components ??
-    serializedDetectedComponents ??
-    input.brokenSrj?.components ??
-    []
+    input.components ?? [...serializedDetectedComponents, ...nestedBgaComponents]
 
   if (!globalNoConnectionSrj) {
     throw new Error(
