@@ -5,12 +5,15 @@ import {
   HighDensityRoute,
 } from "lib/types/high-density-types"
 import { Obstacle } from "lib/types"
-import { GraphicsObject } from "graphics-debug"
+import type { GraphicsObject } from "graphics-debug"
 import { HighDensityRouteSpatialIndex } from "lib/data-structures/HighDensityRouteSpatialIndex"
 import { ConnectivityMap } from "circuit-json-to-connectivity-map"
-import { getJumpersGraphics } from "lib/utils/getJumperGraphics"
 import { createObjectsWithZLayers } from "lib/utils/createObjectsWithZLayers"
 import { segmentToBoxMinDistance } from "@tscircuit/math-utils"
+import {
+  type SameNetViaMerge,
+  visualizeSameNetViaMerger,
+} from "./visualize-same-net-via-merger"
 
 export interface SameNetViaMergerSolverInput {
   inputHdRoutes: HighDensityRoute[]
@@ -160,6 +163,7 @@ export class SameNetViaMergerSolver extends BaseSolver {
   unprocessedRoutes: HighDensityRoute[]
   vias: Via[]
   offendingVias: [Via, Via][]
+  viaMerges: SameNetViaMerge[] = []
   currentViaRoutes: HighDensityIntraNodeRoute[] = []
   connMap: ConnectivityMap
   colorMap: Record<string, string>
@@ -208,7 +212,7 @@ export class SameNetViaMergerSolver extends BaseSolver {
 
     for (let i = 0; i < this.mergedViaHdRoutes.length; i++) {
       const route = this.mergedViaHdRoutes[i]
-      this.dedupeRouteVias(route)
+      this.canonicalizeRouteVias(route)
       for (let j = 0; j < route.vias.length; j++) {
         const viaPoint = route.vias[j]
         const layers = [...new Set(route.route.map((p) => p.z))]
@@ -240,14 +244,32 @@ export class SameNetViaMergerSolver extends BaseSolver {
     )
   }
 
-  private dedupeRouteVias(route: HighDensityRoute): void {
+  private canonicalizeRouteVias(route: HighDensityRoute): void {
     const seenViaLocations = new Set<string>()
-    route.vias = route.vias.filter((via) => {
-      const key = `${via.x}:${via.y}`
-      if (seenViaLocations.has(key)) return false
+    const canonicalVias: HighDensityRoute["vias"] = []
+    for (
+      let routePointIndex = 1;
+      routePointIndex < route.route.length;
+      routePointIndex++
+    ) {
+      const previousPoint = route.route[routePointIndex - 1]!
+      const currentPoint = route.route[routePointIndex]!
+      if (previousPoint.z === currentPoint.z) continue
+      if (
+        previousPoint.x !== currentPoint.x ||
+        previousPoint.y !== currentPoint.y
+      ) {
+        throw new Error(
+          `SameNetViaMergerSolver found a non-vertical layer transition on route "${route.connectionName}"`,
+        )
+      }
+
+      const key = `${previousPoint.x}:${previousPoint.y}`
+      if (seenViaLocations.has(key)) continue
       seenViaLocations.add(key)
-      return true
-    })
+      canonicalVias.push({ x: previousPoint.x, y: previousPoint.y })
+    }
+    route.vias = canonicalVias
   }
 
   private getOffendingViaGroupsBatch(): Array<{ keep: Via; remove: Via[] }> {
@@ -425,7 +447,12 @@ export class SameNetViaMergerSolver extends BaseSolver {
       )
     }
 
-    this.dedupeRouteVias(routeToUpdate)
+    this.viaMerges.push({
+      connectionName: routeToUpdate.connectionName,
+      from: { x: viaToRemove.x, y: viaToRemove.y },
+      to: { x: viaKeep.x, y: viaKeep.y },
+    })
+    this.canonicalizeRouteVias(routeToUpdate)
     if (rebuildVias) this.rebuildVias()
   }
 
@@ -455,105 +482,12 @@ export class SameNetViaMergerSolver extends BaseSolver {
   }
 
   visualize(): GraphicsObject {
-    const visualization: GraphicsObject &
-      Pick<Required<GraphicsObject>, "points" | "lines" | "rects" | "circles"> =
-      {
-        lines: [],
-        points: [],
-        rects: [],
-        circles: [],
-        coordinateSystem: "cartesian",
-        title: "Same Net Via Merger Solver",
-      }
-
-    // Visualize obstacles
-    for (const obstacle of this.input.obstacles) {
-      if (!obstacle.__zLayers) {
-        throw new Error(
-          `SameNetViaMergerSolver found obstacle without zLayers while visualizing`,
-        )
-      }
-
-      let fillColor = "rgba(128, 128, 128, 0.2)" // Default faded gray
-      const strokeColor = "rgba(128, 128, 128, 0.5)"
-      const isOnLayer0 = obstacle.__zLayers.includes(0)
-      const isOnLayer1 = obstacle.__zLayers.includes(1)
-
-      if (isOnLayer0 && isOnLayer1) {
-        fillColor = "rgba(128, 0, 128, 0.2)" // Faded purple for both layers
-      } else if (isOnLayer0) {
-        fillColor = "rgba(255, 0, 0, 0.2)" // Faded red for layer 0
-      } else if (isOnLayer1) {
-        fillColor = "rgba(0, 0, 255, 0.2)" // Faded blue for layer 1
-      }
-
-      visualization.rects.push({
-        center: obstacle.center,
-        width: obstacle.width,
-        height: obstacle.height,
-        fill: fillColor,
-        label: `Obstacle (Z: ${obstacle.__zLayers?.join(", ")})`,
-      })
-    }
-
-    // Display each optimized route
-    for (const route of this.mergedViaHdRoutes) {
-      // Skip routes with no points
-      if (route.route.length === 0) continue
-
-      const color = this.input.colorMap[route.connectionName]
-      if (!color) {
-        throw new Error(
-          `SameNetViaMergerSolver could not find color for route "${route.connectionName}"`,
-        )
-      }
-
-      // Add lines connecting route points on the same layer
-      for (let i = 0; i < route.route.length - 1; i++) {
-        const current = route.route[i]
-        const next = route.route[i + 1]
-
-        // Only draw segments that are on the same layer
-        if (current.z === next.z) {
-          visualization.lines.push({
-            points: [
-              { x: current.x, y: current.y },
-              { x: next.x, y: next.y },
-            ],
-            strokeColor:
-              current.z === 0 ? "rgba(255, 0, 0, 0.5)" : "rgba(0, 0, 255, 0.5)",
-            strokeWidth: route.traceThickness,
-            label: `${route.connectionName} (z=${current.z})`,
-          })
-        }
-      }
-
-      // Add circles for vias
-      for (const via of route.vias) {
-        visualization.circles.push({
-          center: { x: via.x, y: via.y },
-          radius: route.viaDiameter / 2,
-          fill: "rgba(255, 0, 255, 0.5)",
-          label: `${route.connectionName} via`,
-        })
-      }
-
-      // Draw jumpers
-      if (route.jumpers && route.jumpers.length > 0) {
-        const jumperGraphics = getJumpersGraphics(route.jumpers, {
-          color,
-          label: route.connectionName,
-        })
-        if (!jumperGraphics.rects || !jumperGraphics.lines) {
-          throw new Error(
-            `SameNetViaMergerSolver expected jumper graphics for route "${route.connectionName}"`,
-          )
-        }
-        visualization.rects.push(...jumperGraphics.rects)
-        visualization.lines.push(...jumperGraphics.lines)
-      }
-    }
-
-    return visualization
+    return visualizeSameNetViaMerger({
+      inputHdRoutes: this.inputHdRoutes,
+      mergedViaHdRoutes: this.mergedViaHdRoutes,
+      obstacles: this.input.obstacles,
+      colorMap: this.colorMap,
+      viaMerges: this.viaMerges,
+    })
   }
 }

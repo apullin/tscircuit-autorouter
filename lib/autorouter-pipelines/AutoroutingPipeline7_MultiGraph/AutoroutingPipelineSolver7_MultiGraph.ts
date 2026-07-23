@@ -54,7 +54,6 @@ import { CapacityMeshEdgeSolver } from "../../solvers/CapacityMeshSolver/Capacit
 import { CapacityMeshEdgeSolver2_NodeTreeOptimization } from "../../solvers/CapacityMeshSolver/CapacityMeshEdgeSolver2_NodeTreeOptimization"
 import { CapacityNodeTargetMerger } from "../../solvers/CapacityNodeTargetMerger/CapacityNodeTargetMerger"
 import { DeadEndSolver } from "../../solvers/DeadEndSolver/DeadEndSolver"
-import { DrcCheckpointSolver } from "../../solvers/DrcCheckpointSolver/DrcCheckpointSolver"
 import { EscapeViaLocationSolver } from "../../solvers/EscapeViaLocationSolver/EscapeViaLocationSolver"
 import { Pipeline4HighDensityRepairSolver } from "../../solvers/HighDensityRepairSolver/Pipeline4HighDensityRepairSolver"
 import { HighDensitySolver } from "../../solvers/HighDensitySolver/HighDensitySolver"
@@ -67,7 +66,6 @@ import { SingleLayerNodeMergerSolver } from "../../solvers/SingleLayerNodeMerger
 import { StrawSolver } from "../../solvers/StrawSolver/StrawSolver"
 import { TraceSimplificationSolver } from "../../solvers/TraceSimplificationSolver/TraceSimplificationSolver"
 import { TraceWidthSolver } from "../../solvers/TraceWidthSolver/TraceWidthSolver"
-import { UselessViaRemovalSolver } from "../../solvers/UselessViaRemovalSolver/UselessViaRemovalSolver"
 import { PreprocessSimpleRouteJsonSolver } from "../AutoroutingPipeline4_TinyHypergraph/PreprocessSimpleRouteJsonSolver"
 import { MergedComponentTopologyView } from "./MergedComponentTopologyView"
 import { convertPipeline7HdRoutesToSimplifiedPcbTraces } from "./convertPipeline7HdRoutesToSimplifiedPcbTraces"
@@ -229,9 +227,7 @@ export class AutoroutingPipelineSolver7_MultiGraph extends BaseSolver {
   strawSolver?: StrawSolver
   deadEndSolver?: DeadEndSolver
   traceSimplificationSolver?: TraceSimplificationSolver
-  postDrcUselessViaRemovalSolver?: UselessViaRemovalSolver
   postDrcSameNetViaMergerSolver?: SameNetViaMergerSolver
-  postDrcViaOptimizationCheckpointSolver?: DrcCheckpointSolver
   lengthMatchingSolver?: LengthMatchingSolver
   availableSegmentPointSolver?: AvailableSegmentPointSolver
   portPointPathingSolver?: TinyHypergraphPortPointPathingSolver
@@ -713,52 +709,16 @@ export class AutoroutingPipelineSolver7_MultiGraph extends BaseSolver {
       },
     ),
     definePipelineStep(
-      "postDrcUselessViaRemovalSolver",
-      UselessViaRemovalSolver,
-      (cms) => [
-        {
-          unsimplifiedHdRoutes:
-            cms.exactGeometryDrcForceImproveSolver!.getOutput(),
-          obstacles: cms.srj.obstacles,
-          connMap: cms.connMap,
-          colorMap: cms.colorMap,
-          outline: cms.srj.outline,
-          layerCount: cms.srj.layerCount,
-        },
-      ],
-    ),
-    definePipelineStep(
       "postDrcSameNetViaMergerSolver",
       SameNetViaMergerSolver,
       (cms) => [
         {
-          inputHdRoutes: cms.postDrcUselessViaRemovalSolver!.optimizedHdRoutes,
+          inputHdRoutes: cms.exactGeometryDrcForceImproveSolver!.getOutput(),
           obstacles: cms.srj.obstacles,
           connMap: cms.connMap,
           colorMap: cms.colorMap,
           outline: cms.srj.outline,
           layerCount: cms.srj.layerCount,
-        },
-      ],
-    ),
-    definePipelineStep(
-      "postDrcViaOptimizationCheckpointSolver",
-      DrcCheckpointSolver,
-      (cms) => [
-        {
-          baselineHdRoutes: cms.exactGeometryDrcForceImproveSolver!.getOutput(),
-          candidateHdRoutes:
-            cms.postDrcSameNetViaMergerSolver!.mergedViaHdRoutes,
-          drcEvaluator: createPipeline7RelaxedDrcEvaluator({
-            connections: cms.netToPointPairsSolver?.newConnections ?? [],
-            originalConnections: cms.originalSrj.connections,
-            layerCount: cms.srj.layerCount,
-            obstacles: cms.srj.obstacles,
-            defaultViaHoleDiameter: cms.viaHoleDiameter,
-            connMap: cms.connMap,
-            srjWithPointPairs: cms.srjWithPointPairs!,
-            originalSrj: cms.originalSrj,
-          }),
         },
       ],
     ),
@@ -1098,9 +1058,7 @@ export class AutoroutingPipelineSolver7_MultiGraph extends BaseSolver {
 
   _getOutputHdRoutes(): HighDensityRoute[] {
     return (
-      this.postDrcViaOptimizationCheckpointSolver?.getOutput() ??
       this.postDrcSameNetViaMergerSolver?.mergedViaHdRoutes ??
-      this.postDrcUselessViaRemovalSolver?.optimizedHdRoutes ??
       this.exactGeometryDrcForceImproveSolver?.getOutput() ??
       this.globalDrcForceImproveSolver?.getOutput() ??
       this.traceWidthSolver?.getHdRoutesWithWidths() ??
