@@ -3,6 +3,7 @@ import {
   findNestedBgaObstacleGroups,
   findNestedBgaTopologyComponents,
 } from "lib/solvers/TopologyPlanningSolver/find-nested-bga-topology-components"
+import { MultiGraphTopologyPlannerSolver } from "lib/solvers/TopologyPlanningSolver/MultiGraphTopologyPlannerSolver"
 import { createComponentSrj } from "lib/solvers/TopologyPlanningSolver/topologyPlanningShared"
 import type { Obstacle, SimpleRouteJson } from "lib/types"
 
@@ -27,12 +28,7 @@ const createPad = (
 const createCompositePads = () => {
   const componentId = "U_COMPOSITE"
   const innerGrid = Array.from({ length: 25 }, (_, index) =>
-    createPad(
-      componentId,
-      `inner-${index}`,
-      index % 5,
-      Math.floor(index / 5),
-    ),
+    createPad(componentId, `inner-${index}`, index % 5, Math.floor(index / 5)),
   )
   const perimeter = [
     ...Array.from({ length: 7 }, (_, index) =>
@@ -61,9 +57,7 @@ test("finds a complete nested BGA grid inside a mixed component", () => {
   expect(groups).toHaveLength(1)
   expect(groups[0]!.componentId).toBe("U_COMPOSITE")
   expect(
-    groups[0]!.memberObstacles
-      .map((obstacle) => obstacle.obstacleId)
-      .sort(),
+    groups[0]!.memberObstacles.map((obstacle) => obstacle.obstacleId).sort(),
   ).toEqual(innerGrid.map((obstacle) => obstacle.obstacleId).sort())
 })
 
@@ -116,4 +110,27 @@ test("nested BGA topology remaps only member pads to its synthetic component", (
       (obstacle) => obstacle.obstacleId === "overlapping-non-member",
     )?.componentId,
   ).toBe("U_COMPOSITE")
+})
+
+test("uses the full parent component bounds for nested BGA via access", () => {
+  const { innerGrid, obstacles } = createCompositePads()
+  const inputSrj = createSrj(obstacles)
+  const solver = new MultiGraphTopologyPlannerSolver({
+    inputSrj,
+    componentDetectionOutput: [],
+  })
+
+  const [bounds] = solver.getNestedComponentParentBounds()
+
+  expect(bounds).toBeDefined()
+  expect(bounds!.minX).toBeCloseTo(-1.15)
+  expect(bounds!.maxX).toBeCloseTo(5.15)
+  expect(bounds!.minY).toBeCloseTo(-2.075)
+  expect(bounds!.maxY).toBeCloseTo(6.075)
+
+  const homogeneousSolver = new MultiGraphTopologyPlannerSolver({
+    inputSrj: createSrj(innerGrid),
+    componentDetectionOutput: [],
+  })
+  expect(homogeneousSolver.getNestedComponentParentBounds()).toEqual([])
 })

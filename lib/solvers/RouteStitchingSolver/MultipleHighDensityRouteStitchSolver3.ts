@@ -15,6 +15,7 @@ import {
   selectIslandEndpoints,
   selectRoutesAlongEndpointPath,
   snapIslandEndpointToNearestTerminal,
+  snapIslandEndpointsToDistinctTerminals,
 } from "./routeStitchingEndpointHelpers"
 import {
   compareRoutes,
@@ -93,6 +94,7 @@ export class MultipleHighDensityRouteStitchSolver3 extends BaseSolver {
     rootConnectionName?: string
     hdRoutes: HighDensityIntraNodeRoute[]
     allHdRoutes: HighDensityIntraNodeRoute[]
+    expectedPcbPortIds: ReadonlySet<string>
     start: Point3
     end: Point3
   }) {
@@ -100,11 +102,19 @@ export class MultipleHighDensityRouteStitchSolver3 extends BaseSolver {
     if (!rootConnectionName) return null
 
     const currentRouteSet = new Set(params.hdRoutes)
-    const sameRootRoutes = params.allHdRoutes.filter(
-      (route) =>
-        (route.rootConnectionName ?? route.connectionName) ===
-        rootConnectionName,
-    )
+    const sameRootRoutes = params.allHdRoutes.filter((route) => {
+      if (
+        (route.rootConnectionName ?? route.connectionName) !==
+        rootConnectionName
+      ) {
+        return false
+      }
+      if (currentRouteSet.has(route)) return true
+
+      return [route.startPcbPortId, route.endPcbPortId]
+        .filter((pcbPortId): pcbPortId is string => pcbPortId !== undefined)
+        .every((pcbPortId) => params.expectedPcbPortIds.has(pcbPortId))
+    })
 
     if (sameRootRoutes.every((route) => currentRouteSet.has(route))) {
       return null
@@ -250,6 +260,7 @@ export class MultipleHighDensityRouteStitchSolver3 extends BaseSolver {
           possibleEndpoints: candidateEndpoints,
           globalStart,
           globalEnd,
+          matchLayers: this.preserveTerminalPcbPortIds,
         }))
 
         if (
@@ -258,15 +269,22 @@ export class MultipleHighDensityRouteStitchSolver3 extends BaseSolver {
         ) {
           ;[start, end] = [end, start]
         }
-
-        start = snapIslandEndpointToNearestTerminal({
-          islandEndpoint: start,
-          terminals: [globalStart, globalEnd],
-        })
-        end = snapIslandEndpointToNearestTerminal({
-          islandEndpoint: end,
-          terminals: [globalStart, globalEnd],
-        })
+        if (this.preserveTerminalPcbPortIds) {
+          ;({ start, end } = snapIslandEndpointsToDistinctTerminals({
+            start,
+            end,
+            terminals: [globalStart, globalEnd],
+          }))
+        } else {
+          start = snapIslandEndpointToNearestTerminal({
+            islandEndpoint: start,
+            terminals: [globalStart, globalEnd],
+          })
+          end = snapIslandEndpointToNearestTerminal({
+            islandEndpoint: end,
+            terminals: [globalStart, globalEnd],
+          })
+        }
       } else {
         start = {
           ...connection.pointsToConnect[0],
@@ -358,6 +376,11 @@ export class MultipleHighDensityRouteStitchSolver3 extends BaseSolver {
                 hdRoutes[0]?.rootConnectionName,
               hdRoutes,
               allHdRoutes: canonicalHdRoutes,
+              expectedPcbPortIds: new Set(
+                connection.pointsToConnect.flatMap((point) =>
+                  point.pcb_port_id ? [point.pcb_port_id] : [],
+                ),
+              ),
               start,
               end,
             })

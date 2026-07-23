@@ -118,6 +118,48 @@ export class MultiGraphTopologyPlannerSolver extends BasePipelineSolver<MultiGra
     }
   }
 
+  getNestedComponentParentBounds(): SimpleRouteJson["bounds"][] {
+    const parentComponentIds = new Set(
+      this.normalizedInput.components
+        .filter((component) => component.componentId.includes("__nested_bga_"))
+        .flatMap((component) =>
+          component.memberObstacles.flatMap((obstacle) =>
+            obstacle.componentId ? [obstacle.componentId] : [],
+          ),
+        ),
+    )
+
+    return [...parentComponentIds].flatMap((componentId) => {
+      const componentObstacles = this.inputProblem.inputSrj.obstacles.filter(
+        (obstacle) => obstacle.componentId === componentId,
+      )
+      if (componentObstacles.length === 0) return []
+
+      return [
+        componentObstacles.reduce(
+          (bounds, obstacle) => ({
+            minX: Math.min(bounds.minX, obstacle.center.x - obstacle.width / 2),
+            maxX: Math.max(bounds.maxX, obstacle.center.x + obstacle.width / 2),
+            minY: Math.min(
+              bounds.minY,
+              obstacle.center.y - obstacle.height / 2,
+            ),
+            maxY: Math.max(
+              bounds.maxY,
+              obstacle.center.y + obstacle.height / 2,
+            ),
+          }),
+          {
+            minX: Number.POSITIVE_INFINITY,
+            maxX: Number.NEGATIVE_INFINITY,
+            minY: Number.POSITIVE_INFINITY,
+            maxY: Number.NEGATIVE_INFINITY,
+          },
+        ),
+      ]
+    })
+  }
+
   override finalVisualize(): GraphicsObject | null {
     const output = this.getOutput()
     const componentObstacleRects = output.componentNoConnectionSrjs.flatMap(

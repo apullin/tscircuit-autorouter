@@ -19,7 +19,7 @@ export class NodeDimensionSubdivisionSolver extends BaseSolver {
     private readonly minNodeArea: number = DEFAULT_MIN_NODE_AREA,
     private readonly layerCount?: number,
     private readonly viaDiameter?: number,
-    private readonly componentBounds?: Bounds[],
+    private readonly componentBounds?: readonly Bounds[],
   ) {
     super()
     this.outputNodes = []

@@ -134,9 +134,15 @@ export const selectIslandEndpoints = (params: {
   possibleEndpoints: Point3[]
   globalStart: Point3
   globalEnd: Point3
+  matchLayers?: boolean
 }) => {
   const sortedEndpoints = [...params.possibleEndpoints].sort(comparePoints)
-  const start = sortedEndpoints.reduce((bestPoint, point) => {
+  const startCandidates =
+    params.matchLayers &&
+    sortedEndpoints.some((point) => point.z === params.globalStart.z)
+      ? sortedEndpoints.filter((point) => point.z === params.globalStart.z)
+      : sortedEndpoints
+  const start = startCandidates.reduce((bestPoint, point) => {
     const pointDistance = distance(point, params.globalStart)
     const bestDistance = distance(bestPoint, params.globalStart)
     return pointDistance < bestDistance - DISTANCE_TIE_TOLERANCE ||
@@ -152,8 +158,13 @@ export const selectIslandEndpoints = (params: {
     remainingEndpoints.length > 0
       ? remainingEndpoints
       : params.possibleEndpoints
+  const sameLayerEndCandidates =
+    params.matchLayers &&
+    endCandidates.some((point) => point.z === params.globalEnd.z)
+      ? endCandidates.filter((point) => point.z === params.globalEnd.z)
+      : endCandidates
 
-  const end = endCandidates.reduce((bestPoint, point) => {
+  const end = sameLayerEndCandidates.reduce((bestPoint, point) => {
     const pointDistance = distance(point, params.globalEnd)
     const bestDistance = distance(bestPoint, params.globalEnd)
     return pointDistance < bestDistance - DISTANCE_TIE_TOLERANCE ||
@@ -193,6 +204,69 @@ export const snapIslandEndpointToNearestTerminal = (params: {
   return closestDistance <= MAX_TERMINAL_STITCH_GAP_DISTANCE_3
     ? closestTerminal
     : params.islandEndpoint
+}
+
+export const snapIslandEndpointsToDistinctTerminals = (params: {
+  start: Point3
+  end: Point3
+  terminals: Point3[]
+}) => {
+  const getTerminalCandidates = (islandEndpoint: Point3) => [
+    undefined,
+    ...params.terminals
+      .filter(
+        (terminal) =>
+          terminal.z === islandEndpoint.z &&
+          distance(islandEndpoint, terminal) <=
+            MAX_TERMINAL_STITCH_GAP_DISTANCE_3,
+      )
+      .sort(comparePoints),
+  ]
+  const startCandidates = getTerminalCandidates(params.start)
+  const endCandidates = getTerminalCandidates(params.end)
+  const getPcbPortId = (point: Point3) =>
+    (point as Point3 & { pcb_port_id?: string }).pcb_port_id
+
+  let best:
+    | {
+        start?: Point3
+        end?: Point3
+        snappedCount: number
+        totalDistance: number
+      }
+    | undefined
+
+  for (const start of startCandidates) {
+    for (const end of endCandidates) {
+      if (
+        start !== undefined &&
+        end !== undefined &&
+        (start === end ||
+          (getPcbPortId(start) !== undefined &&
+            getPcbPortId(start) === getPcbPortId(end)))
+      ) {
+        continue
+      }
+      const snappedCount =
+        Number(start !== undefined) + Number(end !== undefined)
+      const totalDistance =
+        (start ? distance(params.start, start) : 0) +
+        (end ? distance(params.end, end) : 0)
+      if (
+        !best ||
+        snappedCount > best.snappedCount ||
+        (snappedCount === best.snappedCount &&
+          totalDistance < best.totalDistance - DISTANCE_TIE_TOLERANCE)
+      ) {
+        best = { start, end, snappedCount, totalDistance }
+      }
+    }
+  }
+
+  return {
+    start: best?.start ?? params.start,
+    end: best?.end ?? params.end,
+  }
 }
 
 /**

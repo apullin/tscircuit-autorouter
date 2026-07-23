@@ -44,7 +44,7 @@ export const addViaAccessLayers = ({
   nodes: CapacityMeshNode[]
   layerCount: number
   viaDiameter: number
-  componentBounds?: Bounds[]
+  componentBounds?: readonly Bounds[]
 }) => {
   const allLayers = Array.from({ length: layerCount }, (_, z) => z)
   const originalAvailableZ = new Map(
@@ -83,6 +83,7 @@ export const addViaAccessLayers = ({
   const expandedTargetNodes = targetNodes.filter(
     (node) =>
       Math.min(node.width, node.height) + EPSILON >= viaDiameter &&
+      componentBounds.length > 0 &&
       (hasSameNetTargetOverlap(node) ||
         (overlapsComponentTopology(node) &&
           freeNodes.some((candidate) => canFitViaInOverlap(node, candidate)))),

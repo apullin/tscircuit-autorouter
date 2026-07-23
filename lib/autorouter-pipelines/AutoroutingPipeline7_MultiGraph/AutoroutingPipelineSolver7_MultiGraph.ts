@@ -93,32 +93,14 @@ type PipelineStep<T extends new (...args: any[]) => BaseSolver> = {
   onSolved?: (instance: AutoroutingPipelineSolver7_MultiGraph) => void
 }
 
-/**
- * Collects the capacity mesh node ids produced by component-local topology
- * generation.
- *
- * @param capacityMeshNodes Capacity mesh nodes after topology merging and subdivision.
- * @returns A set of component-local capacity mesh node ids.
- */
-function getComponentCapacityMeshNodeIds(
-  capacityMeshNodes: CapacityMeshNode[] | null | undefined,
-) {
-  return new Set(
-    (capacityMeshNodes ?? [])
-      .filter((node) => node._isComponentTopologyNode)
-      .map((node) => node.capacityMeshNodeId),
-  )
-}
+const MAX_DENSE_COMPONENT_ASPECT_RATIO = 1.5
 
-function getUndetectedDenseComponentBounds(
+export function getUndetectedCompactDenseComponentBounds(
   obstacles: SimpleRouteJson["obstacles"],
   detectedComponentIds: ReadonlySet<string>,
   connections: SimpleRouteJson["connections"],
 ): SimpleRouteJson["bounds"][] {
-  const obstaclesByComponentId = new Map<
-    string,
-    SimpleRouteJson["obstacles"]
-  >()
+  const obstaclesByComponentId = new Map<string, SimpleRouteJson["obstacles"]>()
   for (const obstacle of obstacles) {
     if (!obstacle.componentId) continue
     const componentObstacles =
@@ -135,24 +117,26 @@ function getUndetectedDenseComponentBounds(
       ) {
         return []
       }
-      const bounds: SimpleRouteJson["bounds"] = {
-        minX: Infinity,
-        maxX: -Infinity,
-        minY: Infinity,
-        maxY: -Infinity,
-      }
-      for (const obstacle of componentObstacles) {
-        const obstacleBounds = {
-          minX: obstacle.center.x - obstacle.width / 2,
-          maxX: obstacle.center.x + obstacle.width / 2,
-          minY: obstacle.center.y - obstacle.height / 2,
-          maxY: obstacle.center.y + obstacle.height / 2,
-        }
-        bounds.minX = Math.min(bounds.minX, obstacleBounds.minX)
-        bounds.maxX = Math.max(bounds.maxX, obstacleBounds.maxX)
-        bounds.minY = Math.min(bounds.minY, obstacleBounds.minY)
-        bounds.maxY = Math.max(bounds.maxY, obstacleBounds.maxY)
-      }
+      const bounds = componentObstacles.reduce<SimpleRouteJson["bounds"]>(
+        (result, obstacle) => ({
+          minX: Math.min(result.minX, obstacle.center.x - obstacle.width / 2),
+          maxX: Math.max(result.maxX, obstacle.center.x + obstacle.width / 2),
+          minY: Math.min(result.minY, obstacle.center.y - obstacle.height / 2),
+          maxY: Math.max(result.maxY, obstacle.center.y + obstacle.height / 2),
+        }),
+        {
+          minX: Number.POSITIVE_INFINITY,
+          maxX: Number.NEGATIVE_INFINITY,
+          minY: Number.POSITIVE_INFINITY,
+          maxY: Number.NEGATIVE_INFINITY,
+        },
+      )
+      const width = bounds.maxX - bounds.minX
+      const height = bounds.maxY - bounds.minY
+      const aspectRatio =
+        Math.max(width, height) / Math.max(Math.min(width, height), 1e-6)
+      if (aspectRatio > MAX_DENSE_COMPONENT_ASPECT_RATIO) return []
+
       const terminalLayers = new Set(
         connections.flatMap((connection) =>
           connection.pointsToConnect
@@ -168,9 +152,25 @@ function getUndetectedDenseComponentBounds(
             ),
         ),
       )
-      if (terminalLayers.size < 2) return []
-      return [bounds]
+      return terminalLayers.size >= 2 ? [bounds] : []
     },
+  )
+}
+
+/**
+ * Collects the capacity mesh node ids produced by component-local topology
+ * generation.
+ *
+ * @param capacityMeshNodes Capacity mesh nodes after topology merging and subdivision.
+ * @returns A set of component-local capacity mesh node ids.
+ */
+function getComponentCapacityMeshNodeIds(
+  capacityMeshNodes: CapacityMeshNode[] | null | undefined,
+) {
+  return new Set(
+    (capacityMeshNodes ?? [])
+      .filter((node) => node._isComponentTopologyNode)
+      .map((node) => node.capacityMeshNodeId),
   )
 }
 
@@ -440,15 +440,18 @@ export class AutoroutingPipelineSolver7_MultiGraph extends BaseSolver {
         cms.minNodeArea,
         cms.srj.layerCount,
         cms.viaDiameter,
-        getUndetectedDenseComponentBounds(
-          cms.srj.obstacles,
-          new Set(
-            cms.componentDetectionSolver!
-              .getOutput()
-              .map(({ componentId }) => componentId),
+        [
+          ...cms.topologyPlanningSolver!.getNestedComponentParentBounds(),
+          ...getUndetectedCompactDenseComponentBounds(
+            cms.srj.obstacles,
+            new Set(
+              cms
+                .componentDetectionSolver!.getOutput()
+                .map(({ componentId }) => componentId),
+            ),
+            cms.srjWithPointPairs!.connections,
           ),
-          cms.srjWithPointPairs!.connections,
-        ),
+        ],
       ],
       {
         onSolved: (cms) => {
