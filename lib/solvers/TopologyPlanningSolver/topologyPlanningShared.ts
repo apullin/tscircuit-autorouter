@@ -172,8 +172,10 @@ export function normalizeInput(
             ),
           ],
         }
-  const components =
-    input.components ?? [...serializedDetectedComponents, ...nestedBgaComponents]
+  const components = input.components ?? [
+    ...serializedDetectedComponents,
+    ...nestedBgaComponents,
+  ]
 
   if (!globalNoConnectionSrj) {
     throw new Error(

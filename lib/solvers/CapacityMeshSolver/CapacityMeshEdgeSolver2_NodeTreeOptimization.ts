@@ -18,7 +18,10 @@ export class CapacityMeshEdgeSolver2_NodeTreeOptimization extends CapacityMeshEd
   private currentNodeIndex: number
   private edgeSet: Set<string>
 
-  constructor(public nodes: CapacityMeshNode[], viaDiameter?: number) {
+  constructor(
+    public nodes: CapacityMeshNode[],
+    viaDiameter?: number,
+  ) {
     super(nodes, viaDiameter)
     this.MAX_ITERATIONS = 10e6
     this.nodeTree = new CapacityNodeTree(this.nodes)

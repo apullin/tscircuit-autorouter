@@ -13,8 +13,7 @@ const getExactDrcWorkEstimate = (
     (count, route) => count + Math.max(0, route.route.length - 1),
     0,
   )
-  const boardObjectCount =
-    params.hdRoutes.length + params.srj.obstacles.length
+  const boardObjectCount = params.hdRoutes.length + params.srj.obstacles.length
 
   return segmentCount * boardObjectCount
 }

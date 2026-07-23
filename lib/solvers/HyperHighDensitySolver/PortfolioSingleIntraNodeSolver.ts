@@ -305,7 +305,10 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
   }
 
   override initializeSolvers() {
-    const connectionGroups = new Map<string, typeof this.nodeWithPortPoints.portPoints>()
+    const connectionGroups = new Map<
+      string,
+      typeof this.nodeWithPortPoints.portPoints
+    >()
     for (const portPoint of this.nodeWithPortPoints.portPoints) {
       const points = connectionGroups.get(portPoint.connectionName) ?? []
       points.push(portPoint)

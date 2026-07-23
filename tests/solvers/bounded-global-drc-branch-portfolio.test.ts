@@ -42,9 +42,7 @@ const makeParams = (
 })
 
 test("bounds exact DRC repair for very large routed geometries", () => {
-  const routes = Array.from({ length: 500 }, (_, index) =>
-    makeRoute(index, 22),
-  )
+  const routes = Array.from({ length: 500 }, (_, index) => makeRoute(index, 22))
   let evaluationCount = 0
   const solver = new BoundedGlobalDrcBranchPortfolioSolver({
     ...makeParams(routes),

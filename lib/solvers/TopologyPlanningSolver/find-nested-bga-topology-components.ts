@@ -21,9 +21,9 @@ export const getTopologyObstacleKey = (obstacle: Obstacle) =>
   ].join(":")
 
 const getUniqueSortedCoordinates = (values: number[]) =>
-  [...new Map(values.map((value) => [coordinateKey(value), value])).values()].sort(
-    (left, right) => left - right,
-  )
+  [
+    ...new Map(values.map((value) => [coordinateKey(value), value])).values(),
+  ].sort((left, right) => left - right)
 
 const findCoordinate = (coordinates: number[], expected: number) =>
   coordinates.find(

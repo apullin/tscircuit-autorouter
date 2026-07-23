@@ -62,10 +62,12 @@ test("SameNetViaMergerSolver tolerates rounded via coordinates", () => {
   solver.solve()
 
   expect(solver.failed).toBe(false)
-  expect(solver.getMergedViaHdRoutes()?.flatMap((route) => route.vias)).toEqual([
-    { x: 0, y: 0 },
-    { x: 0, y: 0 },
-  ])
+  expect(solver.getMergedViaHdRoutes()?.flatMap((route) => route.vias)).toEqual(
+    [
+      { x: 0, y: 0 },
+      { x: 0, y: 0 },
+    ],
+  )
 })
 
 test("SameNetViaMergerSolver skips a stale via without a route transition", () => {

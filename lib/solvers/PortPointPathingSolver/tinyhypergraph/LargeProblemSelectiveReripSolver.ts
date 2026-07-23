@@ -64,12 +64,13 @@ type SolverInternals = {
     fromPortId: number,
     toPortId: number,
   ): void
-  findRelaxedBlockerPath(
-    forbiddenOwnerRouteIds?: ReadonlySet<number>,
-  ): unknown
+  findRelaxedBlockerPath(forbiddenOwnerRouteIds?: ReadonlySet<number>): unknown
 }
 
-const pushHeap = (heap: ClearPathSearchState[], state: ClearPathSearchState) => {
+const pushHeap = (
+  heap: ClearPathSearchState[],
+  state: ClearPathSearchState,
+) => {
   heap.push(state)
   let index = heap.length - 1
   while (index > 0) {
@@ -337,10 +338,7 @@ export class LargeProblemSelectiveReripSolver extends SelectiveReripTinyHyperGra
           if (ownerRouteId !== routeId) owners.add(ownerRouteId)
         }
         const distance = current.distance + hop.distance
-        const key = internals.getHopId(
-          hop.state.portId,
-          hop.state.nextRegionId,
-        )
+        const key = internals.getHopId(hop.state.portId, hop.state.nextRegionId)
         const dx =
           this.topology.portX[hop.state.portId]! -
           this.topology.portX[goalPortId]!
@@ -348,13 +346,8 @@ export class LargeProblemSelectiveReripSolver extends SelectiveReripTinyHyperGra
           this.topology.portY[hop.state.portId]! -
           this.topology.portY[goalPortId]!
         const score =
-          owners.size +
-          distance +
-          Math.hypot(dx, dy) * heuristicWeight
-        if (
-          score >=
-          (bestScoreByState.get(key) ?? Number.POSITIVE_INFINITY)
-        ) {
+          owners.size + distance + Math.hypot(dx, dy) * heuristicWeight
+        if (score >= (bestScoreByState.get(key) ?? Number.POSITIVE_INFINITY)) {
           continue
         }
         bestScoreByState.set(key, score)
@@ -387,9 +380,7 @@ export class LargeProblemSelectiveReripSolver extends SelectiveReripTinyHyperGra
     return segments
   }
 
-  private startSelectiveReripFromRelaxedPath(
-    relaxedPath: RelaxedPathResult,
-  ) {
+  private startSelectiveReripFromRelaxedPath(relaxedPath: RelaxedPathResult) {
     const internals = this as unknown as SolverInternals
     const originalFindRelaxedBlockerPath =
       internals.findRelaxedBlockerPath.bind(this)
@@ -414,11 +405,7 @@ export class LargeProblemSelectiveReripSolver extends SelectiveReripTinyHyperGra
     const internals = this as unknown as SolverInternals
     internals.routeSuccessCountByRouteId[routeId] += 1
     for (const { regionId, fromPortId, toPortId } of segments) {
-      this.state.regionSegments[regionId]!.push([
-        routeId,
-        fromPortId,
-        toPortId,
-      ])
+      this.state.regionSegments[regionId]!.push([routeId, fromPortId, toPortId])
       this.state.portAssignment[fromPortId] = this.state.currentRouteNetId!
       this.state.portAssignment[toPortId] = this.state.currentRouteNetId!
       internals.appendSegmentToRegionCache(regionId, fromPortId, toPortId)

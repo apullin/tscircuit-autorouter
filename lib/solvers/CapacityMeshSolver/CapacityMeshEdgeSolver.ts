@@ -41,10 +41,7 @@ export class CapacityMeshEdgeSolver extends BaseSolver {
         if (
           !strawNodesWithSameParent &&
           (areNodesBordering(this.nodes[i], this.nodes[j]) ||
-            this.doNodesHaveViaAccessOverlap(
-              this.nodes[i],
-              this.nodes[j],
-            )) &&
+            this.doNodesHaveViaAccessOverlap(this.nodes[i], this.nodes[j])) &&
           this.doNodesHaveSharedLayer(this.nodes[i], this.nodes[j])
         ) {
           this.edges.push({
@@ -180,8 +177,7 @@ export class CapacityMeshEdgeSolver extends BaseSolver {
         node2.center.y - node2.height / 2,
       )
     return (
-      xOverlap + 1e-6 >= this.viaDiameter &&
-      yOverlap + 1e-6 >= this.viaDiameter
+      xOverlap + 1e-6 >= this.viaDiameter && yOverlap + 1e-6 >= this.viaDiameter
     )
   }
 
