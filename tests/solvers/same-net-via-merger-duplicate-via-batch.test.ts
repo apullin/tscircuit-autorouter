@@ -38,16 +38,61 @@ test("SameNetViaMergerSolver canonicalizes route vias before batching merges", (
         ],
         vias: [{ x: 2.5, y: 0 }],
       },
+      {
+        connectionName: "through-obstacle-route",
+        traceThickness: 0.15,
+        viaDiameter: 0.3,
+        route: [
+          {
+            x: 4,
+            y: 0,
+            z: 0,
+            toNextSegmentType: "through_obstacle",
+          },
+          { x: 5, y: 0, z: 1 },
+        ],
+        vias: [{ x: 4.5, y: 0 }],
+      },
+      {
+        connectionName: "combined-transition-at-start",
+        traceThickness: 0.15,
+        viaDiameter: 0.3,
+        route: [
+          { x: 6, y: 0, z: 0 },
+          { x: 7, y: 0, z: 1 },
+        ],
+        vias: [{ x: 6, y: 0 }],
+      },
+      {
+        connectionName: "combined-transition-at-end",
+        traceThickness: 0.15,
+        viaDiameter: 0.3,
+        route: [
+          { x: 8, y: 0, z: 0 },
+          { x: 9, y: 0, z: 1 },
+        ],
+        vias: [{ x: 9, y: 0 }],
+      },
     ],
     obstacles: [],
     colorMap: {
       "route-with-duplicate": "#ef4444",
       "nearby-route": "#3b82f6",
       "route-with-stale-via": "#22c55e",
+      "through-obstacle-route": "#f97316",
+      "combined-transition-at-start": "#a855f7",
+      "combined-transition-at-end": "#06b6d4",
     },
     layerCount: 2,
     connMap: new ConnectivityMap({
-      net0: ["route-with-duplicate", "nearby-route", "route-with-stale-via"],
+      net0: [
+        "route-with-duplicate",
+        "nearby-route",
+        "route-with-stale-via",
+        "through-obstacle-route",
+        "combined-transition-at-start",
+        "combined-transition-at-end",
+      ],
     }),
   })
 
@@ -58,8 +103,30 @@ test("SameNetViaMergerSolver canonicalizes route vias before batching merges", (
     [
       { x: 0, y: 0 },
       { x: 0, y: 0 },
+      { x: 6, y: 0 },
+      { x: 9, y: 0 },
     ],
   )
+  expect(
+    solver
+      .getMergedViaHdRoutes()
+      ?.find((route) => route.connectionName === "combined-transition-at-start")
+      ?.route,
+  ).toEqual([
+    { x: 6, y: 0, z: 0 },
+    { x: 6, y: 0, z: 1 },
+    { x: 7, y: 0, z: 1 },
+  ])
+  expect(
+    solver
+      .getMergedViaHdRoutes()
+      ?.find((route) => route.connectionName === "combined-transition-at-end")
+      ?.route,
+  ).toEqual([
+    { x: 8, y: 0, z: 0 },
+    { x: 9, y: 0, z: 0 },
+    { x: 9, y: 0, z: 1 },
+  ])
   expect(solver.viaMerges).toEqual([
     {
       connectionName: "nearby-route",

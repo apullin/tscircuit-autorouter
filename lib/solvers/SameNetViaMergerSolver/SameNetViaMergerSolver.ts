@@ -245,16 +245,72 @@ export class SameNetViaMergerSolver extends BaseSolver {
   }
 
   private canonicalizeRouteVias(route: HighDensityRoute): void {
+    const originalRoute = route.route
+    const canonicalRoute: HighDensityRoute["route"] = []
+
+    for (
+      let routePointIndex = 0;
+      routePointIndex < originalRoute.length;
+      routePointIndex++
+    ) {
+      const currentPoint = originalRoute[routePointIndex]!
+      const previousPoint = originalRoute[routePointIndex - 1]
+      // Route reconstruction can combine a declared via and its adjacent
+      // planar segment into one XY/Z edge. Split it at the declared via.
+      if (
+        previousPoint &&
+        previousPoint.z !== currentPoint.z &&
+        previousPoint.toNextSegmentType !== "through_obstacle" &&
+        (previousPoint.x !== currentPoint.x ||
+          previousPoint.y !== currentPoint.y)
+      ) {
+        const hasViaAtPreviousPoint = route.vias.some(
+          (via) => via.x === previousPoint.x && via.y === previousPoint.y,
+        )
+        const hasViaAtCurrentPoint = route.vias.some(
+          (via) => via.x === currentPoint.x && via.y === currentPoint.y,
+        )
+        if (hasViaAtPreviousPoint === hasViaAtCurrentPoint) {
+          throw new Error(
+            `SameNetViaMergerSolver could not resolve a non-vertical layer transition on route "${route.connectionName}"`,
+          )
+        }
+
+        if (hasViaAtPreviousPoint) {
+          canonicalRoute.push({
+            x: previousPoint.x,
+            y: previousPoint.y,
+            z: currentPoint.z,
+            ...(currentPoint.traceThickness !== undefined
+              ? { traceThickness: currentPoint.traceThickness }
+              : {}),
+          })
+        } else {
+          canonicalRoute.push({
+            x: currentPoint.x,
+            y: currentPoint.y,
+            z: previousPoint.z,
+            ...(previousPoint.traceThickness !== undefined
+              ? { traceThickness: previousPoint.traceThickness }
+              : {}),
+          })
+        }
+      }
+      canonicalRoute.push(currentPoint)
+    }
+
+    route.route = canonicalRoute
     const seenViaLocations = new Set<string>()
     const canonicalVias: HighDensityRoute["vias"] = []
     for (
       let routePointIndex = 1;
-      routePointIndex < route.route.length;
+      routePointIndex < canonicalRoute.length;
       routePointIndex++
     ) {
-      const previousPoint = route.route[routePointIndex - 1]!
-      const currentPoint = route.route[routePointIndex]!
+      const previousPoint = canonicalRoute[routePointIndex - 1]!
+      const currentPoint = canonicalRoute[routePointIndex]!
       if (previousPoint.z === currentPoint.z) continue
+      if (previousPoint.toNextSegmentType === "through_obstacle") continue
       if (
         previousPoint.x !== currentPoint.x ||
         previousPoint.y !== currentPoint.y
