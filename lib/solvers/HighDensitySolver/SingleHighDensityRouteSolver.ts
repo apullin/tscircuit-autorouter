@@ -63,7 +63,12 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
   CELL_SIZE_FACTOR: number
   NEARBY_SEGMENT_CLEARANCE: number
 
-  exploredNodes: Set<number>
+  /**
+   * Dense explored-cell bitmap indexed by getPackedNodeKey (keys span
+   * [0, nodeKeyCapacity)). Replaces Set<number>: direct indexing, no
+   * hashing, no GC pressure in the hottest A* loop.
+   */
+  exploredNodes: Uint8Array
 
   /**
    * Packed numeric node-key parameters. Keys are
@@ -152,7 +157,6 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
       opts.availableZ && opts.availableZ.length > 0
         ? [...new Set(opts.availableZ)].sort((a, b) => a - b)
         : Array.from({ length: this.layerCount }, (_, index) => index)
-    this.exploredNodes = new Set()
     this.straightLineDistance = distance(this.A, this.B)
     this.futureConnections = opts.futureConnections ?? []
     this.NEARBY_SEGMENT_CLEARANCE = opts.nearbySegmentClearance ?? 0.15
@@ -206,6 +210,7 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
     this.nodeKeyZExtent = keyZHi - keyZLo + 1
     const nodeKeyCapacity =
       (keyIxHi - keyIxLo + 1) * this.nodeKeyIyExtent * this.nodeKeyZExtent
+    this.exploredNodes = new Uint8Array(nodeKeyCapacity)
     if (
       !Number.isSafeInteger(keyIxLo) ||
       !Number.isSafeInteger(keyIxHi) ||
@@ -563,7 +568,7 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
         const y = clamp(node.y + dy * this.cellStep, minY, maxY)
         const neighborKey = this.getPackedNodeKey(x, y, node.z)
 
-        if (this.exploredNodes.has(neighborKey)) {
+        if (this.exploredNodes[neighborKey] === 1) {
           continue
         }
 
@@ -581,12 +586,12 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
           if (this.debugEnabled) {
             this.debug_nodesTooCloseToObstacle.add(neighborKey)
           }
-          this.exploredNodes.add(neighborKey)
+          this.exploredNodes[neighborKey] = 1
           continue
         }
 
         if (this.isNodeTooCloseToEdge(neighbor, false)) {
-          this.exploredNodes.add(neighborKey)
+          this.exploredNodes[neighborKey] = 1
           continue
         }
 
@@ -594,7 +599,7 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
           if (this.debugEnabled) {
             this.debug_nodePathToParentIntersectsObstacle.add(neighborKey)
           }
-          this.exploredNodes.add(neighborKey)
+          this.exploredNodes[neighborKey] = 1
           continue
         }
 
@@ -610,7 +615,7 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
     for (const newZ of this.availableZ) {
       if (newZ === node.z) continue
 
-      if (this.exploredNodes.has(this.getPackedNodeKey(node.x, node.y, newZ))) {
+      if (this.exploredNodes[this.getPackedNodeKey(node.x, node.y, newZ)] === 1) {
         continue
       }
 
@@ -718,7 +723,7 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
         currentNode.y,
         currentNode.z,
       )
-      if (!this.exploredNodes.has(currentNodeKey)) break
+      if (!this.exploredNodes[currentNodeKey]) break
       currentNode = this.candidates.dequeue()
     }
 
@@ -727,7 +732,7 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
       this.error = "Ran out of candidate nodes to explore"
       return
     }
-    this.exploredNodes.add(currentNodeKey)
+    this.exploredNodes[currentNodeKey] = 1
     if (this.debugEnabled) {
       this.debug_exploredNodesOrdered.push(currentNodeKey)
     }
