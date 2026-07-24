@@ -97,14 +97,6 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
   obstacleVias: IndexedObstacleVia[] = []
   obstacleViaIndex: Flatbush | null = null
 
-  /**
-   * Memoizes the position-only portion of isNodeTooCloseToObstacle (the
-   * flatbush segment/via index probes). Valid per instance because
-   * obstacleRoutes (and therefore the indexes) never change after
-   * construction. Measured 85.9% hit rate on srj18 sample 5.
-   */
-  private obstacleProximityMemo = new Map<string, boolean>()
-
   /** For debugging/animating the exploration */
   debug_exploredNodesOrdered: string[]
   debug_nodesTooCloseToObstacle: Set<string>
@@ -354,10 +346,6 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
       }
     }
 
-    const memoKey = `${node.x}|${node.y}|${node.z}|${margin}|${isVia ? 1 : 0}`
-    const memoized = this.obstacleProximityMemo.get(memoKey)
-    if (memoized !== undefined) return memoized
-
     const traceProximity = this.traceThickness + margin
     if (this.obstacleSegmentIndex) {
       const nearbySegmentIds = this.obstacleSegmentIndex.search(
@@ -373,7 +361,6 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
         if (
           pointToSegmentDistance(node, segment.A, segment.B) < traceProximity
         ) {
-          this.obstacleProximityMemo.set(memoKey, true)
           return true
         }
       }
@@ -390,13 +377,11 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
       for (const viaId of nearbyViaIds) {
         const via = this.obstacleVias[viaId]
         if (via && distance(node, via) < viaProximity) {
-          this.obstacleProximityMemo.set(memoKey, true)
           return true
         }
       }
     }
 
-    this.obstacleProximityMemo.set(memoKey, false)
     return false
   }
 
