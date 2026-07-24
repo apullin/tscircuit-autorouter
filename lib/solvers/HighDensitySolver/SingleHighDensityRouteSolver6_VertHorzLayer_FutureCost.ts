@@ -51,6 +51,19 @@ export class SingleHighDensityRouteSolver6_VertHorzLayer_FutureCost extends Sing
   private sharedCostGoalDist = 0
   private sharedCostFutureConnectionPenalty = 0
 
+  /**
+   * Precomputed per-segment bounding boxes (built once at construction).
+   * Lets isViaTooCloseToFutureConnectionTrace reject segments whose bbox is
+   * farther than the clearance without calling pointToSegmentDistance —
+   * exact: bbox distance is a lower bound for true distance.
+   */
+  private futureConnectionSegmentBboxes: Array<{
+    minX: number
+    minY: number
+    maxX: number
+    maxY: number
+  }>
+
   constructor(
     opts: ConstructorParameters<typeof SingleHighDensityRouteSolver>[0],
   ) {
@@ -75,6 +88,14 @@ export class SingleHighDensityRouteSolver6_VertHorzLayer_FutureCost extends Sing
     // final at this point, so the cached penalty distance can be refreshed
     this.updateViaPenaltyDistance()
     this.futureConnectionSegments = this.getFutureConnectionSegments()
+    this.futureConnectionSegmentBboxes = this.futureConnectionSegments.map(
+      (segment) => ({
+        minX: Math.min(segment.start.x, segment.end.x),
+        minY: Math.min(segment.start.y, segment.end.y),
+        maxX: Math.max(segment.start.x, segment.end.x),
+        maxY: Math.max(segment.start.y, segment.end.y),
+      }),
+    )
   }
 
   getClosestFutureConnectionPoint(node: Node) {
@@ -83,9 +104,16 @@ export class SingleHighDensityRouteSolver6_VertHorzLayer_FutureCost extends Sing
 
     for (const futureConnection of this.futureConnections) {
       for (const point of futureConnection.points) {
-        const dist =
-          distance(node, point) +
-          (node.z !== point.z ? this.viaPenaltyDistance : 0)
+        // Exact rejects (no float-semantics change): a point cannot beat
+        // minDist if its z-mismatch penalty alone reaches it, or if either
+        // axis delta does (euclidean >= |dx|, |dy|).
+        const zPenalty = node.z !== point.z ? this.viaPenaltyDistance : 0
+        if (zPenalty >= minDist) continue
+        const dx = Math.abs(node.x - point.x)
+        if (dx >= minDist) continue
+        const dy = Math.abs(node.y - point.y)
+        if (dy >= minDist) continue
+        const dist = distance(node, point) + zPenalty
         if (dist < minDist) {
           minDist = dist
           closestPoint = point
@@ -150,7 +178,21 @@ export class SingleHighDensityRouteSolver6_VertHorzLayer_FutureCost extends Sing
       this.traceThickness / 2 +
       this.FUTURE_CONNECTION_VIA_TRACE_CLEARANCE
 
-    for (const segment of this.futureConnectionSegments) {
+    for (let i = 0; i < this.futureConnectionSegments.length; i++) {
+      // Bbox reject with safety slack: point-to-segment distance is at least
+      // the point-to-bbox distance; the 1+1e-9 factor makes the skip
+      // provably safe against ulp-level differences between this squared
+      // check and pointToSegmentDistance's internal arithmetic.
+      const bbox = this.futureConnectionSegmentBboxes[i]!
+      const bx = Math.max(bbox.minX - node.x, 0, node.x - bbox.maxX)
+      if (bx >= minCenterlineDistance) continue
+      const by = Math.max(bbox.minY - node.y, 0, node.y - bbox.maxY)
+      if (by >= minCenterlineDistance) continue
+      const slack = minCenterlineDistance * (1 + 1e-9)
+      if (bx * bx + by * by >= slack * slack) {
+        continue
+      }
+      const segment = this.futureConnectionSegments[i]!
       if (
         pointToSegmentDistance(node, segment.start, segment.end) <
         minCenterlineDistance
