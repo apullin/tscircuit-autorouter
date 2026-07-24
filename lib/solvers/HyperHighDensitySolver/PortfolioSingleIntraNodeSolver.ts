@@ -24,6 +24,7 @@ import {
   getGlobalRacePool,
   parallelPortfolioEnabled,
 } from "../../parallel/PortfolioRacePool"
+import { parallelReplayEnabled, runReplayRace } from "../../parallel/replayPool"
 import { extractWinningRoutes } from "./extractWinningRoutes"
 import { repairDisconnectedSameRootPortPoints } from "./repairDisconnectedSameRootPortPoints"
 
@@ -393,6 +394,11 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
    * sequential fitness schedule (winner identity can change) — quality-gated.
    */
   private parallelRaceStep() {
+    const replayWorkers = parallelReplayEnabled()
+    if (replayWorkers > 0) {
+      this.parallelReplayStep(replayWorkers)
+      return
+    }
     // Compute the same hyperparameter set the sequential supervisor would
     // construct (including adaptive-expansion candidates) without building
     // any solver in-process.
@@ -435,6 +441,71 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
       this.error = `All candidates failed in parallel race. ${outcome.errors
         .slice(0, 3)
         .join("; ")}`
+    }
+  }
+
+  /**
+   * P2-replay (perf-artifacts/parallelism-design.md §5): run all candidates
+   * in workers, then replay the sequential fitness schedule over the
+   * recorded progress trajectories. Winner (and therefore routes) is
+   * bit-identical to the sequential supervisor. Enabled via
+   * TS_PARALLEL_REPLAY=N (worker count).
+   */
+  private parallelReplayStep(workers: number) {
+    const defs = this.getHyperParameterDefs()
+    const combinationDefs = this.getCombinationDefs() ?? [
+      defs.map((def) => def.name),
+    ]
+    const hyperParameterList: Array<Record<string, any>> = []
+    for (const combinationDef of combinationDefs) {
+      hyperParameterList.push(
+        ...this.getHyperParameterCombinations(
+          defs.filter((hpd) => combinationDef.includes(hpd.name)),
+        ),
+      )
+    }
+    const initialCount = hyperParameterList.length
+    for (const shuffleSeed of ORDERING_SHUFFLE_SEEDS.slice(1)) {
+      hyperParameterList.push({ HIGH_DENSITY_A01: true, SHUFFLE_SEED: shuffleSeed })
+    }
+
+    const constructorParams = this.constructorParams as unknown as Record<
+      string,
+      unknown
+    >
+    const outcome = runReplayRace(
+      hyperParameterList.map((hyperParameters) => ({
+        hyperParameters,
+        constructorParams,
+      })),
+      {
+        workers,
+        nodeSegmentCount: this.getNodeSegmentCount(),
+        initialCount,
+      },
+    )
+
+    if (outcome.winnerIndex !== null && outcome.routes) {
+      this.solvedRoutes = outcome.routes
+      this.solved = true
+      this.progress = 1
+      this.stats.parallelReplay = true
+      this.stats.parallelReplayWinnerIndex = outcome.winnerIndex
+      if (typeof process !== "undefined" && process.env.PERF_SUPERVISOR_STATS) {
+        const g = globalThis as unknown as {
+          __replayStats?: Array<Record<string, unknown>>
+        }
+        g.__replayStats ??= []
+        g.__replayStats.push({
+          nodeId: this.nodeWithPortPoints.capacityMeshNodeId,
+          winnerIndex: outcome.winnerIndex,
+          winnerIterations: outcome.results[outcome.winnerIndex]!.iterations,
+          winnerHp: JSON.stringify(hyperParameterList[outcome.winnerIndex]),
+        })
+      }
+    } else {
+      this.failed = true
+      this.error = "All candidates failed in parallel replay"
     }
   }
 
@@ -604,7 +675,16 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
         __supervisorStats?: Array<Record<string, unknown>>
       }
       g.__supervisorStats ??= []
+      if (
+        process.env.PERF_CAPTURE_NODE &&
+        this.nodeWithPortPoints.capacityMeshNodeId ===
+          process.env.PERF_CAPTURE_NODE
+      ) {
+        ;(globalThis as unknown as { __capturedParams?: unknown })
+          .__capturedParams = this.constructorParams
+      }
       g.__supervisorStats.push({
+        nodeId: this.nodeWithPortPoints.capacityMeshNodeId,
         winnerIterations: solver.solver.iterations,
         winnerKind: solver.solver.constructor.name,
         totalCandidateWork: this.getTotalCandidateWork(),
