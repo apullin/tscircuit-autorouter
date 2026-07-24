@@ -62,15 +62,20 @@ const isThroughObstacleSegment = (
 ) => {
   if (start.toNextSegmentType === "through_obstacle") return true
 
-  return (
-    opts.obstacles?.some(
-      (obstacle) =>
-        isMultilayerObstacle(obstacle) &&
-        isObstacleConnectedToRoute(obstacle, hdRoute, opts.connMap) &&
-        pointInsideObstacle(start, obstacle) &&
-        pointInsideObstacle(end, obstacle),
-    ) ?? false
-  )
+  const obstacles = opts.obstacles
+  if (!obstacles) return false
+  // Cheap geometric tests first: pointInsideObstacle rejects nearly every
+  // candidate, avoiding connMap lookups in isObstacleConnectedToRoute.
+  for (let i = 0; i < obstacles.length; i++) {
+    const obstacle = obstacles[i]!
+    if (!isMultilayerObstacle(obstacle)) continue
+    if (!pointInsideObstacle(start, obstacle)) continue
+    if (!pointInsideObstacle(end, obstacle)) continue
+    if (isObstacleConnectedToRoute(obstacle, hdRoute, opts.connMap)) {
+      return true
+    }
+  }
+  return false
 }
 
 const findNearestTerminalViaPoint = ({
