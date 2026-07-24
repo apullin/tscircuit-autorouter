@@ -16,7 +16,10 @@ export class ObstacleSpatialHashIndex {
   private storage: Obstacle[] = []
 
   constructor(
-    implementation: "native" | "rbush" | "flatbush" = "native",
+    // "flatbush" is the default: every production caller already passes it
+    // explicitly, and the native spatial-hash backend has a latent
+    // skip-last-row/column bug in its float-stride bucket loops.
+    implementation: "native" | "rbush" | "flatbush" = "flatbush",
     obstacles: Obstacle[] = [],
   ) {
     if (implementation === "flatbush") {
