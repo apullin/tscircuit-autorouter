@@ -37,6 +37,15 @@ const getSegmentBounds = (segment: Segment) => {
 
 export type BucketCoordinate = `${number}x${number}`
 
+// Packed numeric bucket keys instead of template strings. Cell indices are
+// offset into the non-negative range and packed into a single float64-exact
+// integer. Supports cell indices in ±2^20 (boards up to ~10^6 cells across —
+// far beyond any real input).
+const BUCKET_KEY_OFFSET = 1 << 20
+const BUCKET_KEY_SPAN = 1 << 21
+const packBucketKey = (ix: number, iy: number): number =>
+  (ix + BUCKET_KEY_OFFSET) * BUCKET_KEY_SPAN + (iy + BUCKET_KEY_OFFSET)
+
 // --- Geometry Helper Functions (Unchanged, but ensure Point2D compatibility) ---
 
 function computeDistSq(p1: Point2D, p2: Point2D): number {
@@ -83,104 +92,59 @@ function segmentToSegmentDistanceSq(
 
 // --- New Interfaces for Bucket Contents ---
 interface StoredSegment {
-  segmentId: string
   segment: [Point, Point] // Keep original Point type if needed by other parts
   parentRoute: HighDensityRoute
+  // Generation-counter dedupe: a stored item is shared between every bucket it
+  // spans; queries skip items already seen in the current query generation.
+  lastQueryStamp: number
 }
 
 interface StoredVia {
-  viaId: string // Unique identifier for the via within its route
   x: number
   y: number
   parentRoute: HighDensityRoute
+  lastQueryStamp: number
+}
+
+interface RouteBucketMembership {
+  segmentBucketKeys: Set<number>
+  viaBucketKeys: Set<number>
 }
 
 // --- Updated Spatial Index Class ---
 
 export class HighDensityRouteSpatialIndex {
-  private segmentBuckets: Map<BucketCoordinate, StoredSegment[]>
-  private viaBuckets: Map<BucketCoordinate, StoredVia[]> // New: Store vias
+  private segmentBuckets: Map<number, StoredSegment[]>
+  private viaBuckets: Map<number, StoredVia[]>
   private CELL_SIZE: number
+  // Per-route bucket membership so removeRoute only touches the buckets the
+  // route actually occupies (instead of filtering every bucket in the index).
+  private routeBucketMembership: Map<string, RouteBucketMembership>
+  private queryStamp = 0
 
   constructor(routes: HighDensityRoute[], cellSize: number = 1.0) {
     // console.time("HighDensityRouteSpatialIndex Constructor");
     this.segmentBuckets = new Map()
     this.viaBuckets = new Map() // Initialize via buckets
+    this.routeBucketMembership = new Map()
     this.CELL_SIZE = cellSize
-    const epsilon = 1e-9 // For segment boundary checks
 
     for (const route of routes) {
-      if (!route || !route.connectionName) {
-        console.warn("Skipping route with missing data:", route)
-        continue
-      }
-
-      // --- Index Segments ---
-      if (route.route && route.route.length >= 2) {
-        for (let i = 0; i < route.route.length - 1; i++) {
-          const p1 = route.route[i]
-          const p2 = route.route[i + 1]
-          // Skip zero-length segments
-          if (p1.x === p2.x && p1.y === p2.y) continue
-          // Skip segments inside jumper pads (jumper wires are not collidable)
-          if (p1.insideJumperPad && p2.insideJumperPad) continue
-
-          const segment: Segment = [p1, p2]
-          const bounds = getSegmentBounds(segment)
-
-          const segmentInfo: StoredSegment = {
-            segmentId: `${route.connectionName}-seg-${i}`,
-            segment: segment,
-            parentRoute: route,
-          }
-
-          const minIndexX = Math.floor(bounds.minX / this.CELL_SIZE)
-          const maxIndexX = Math.floor((bounds.maxX + epsilon) / this.CELL_SIZE)
-          const minIndexY = Math.floor(bounds.minY / this.CELL_SIZE)
-          const maxIndexY = Math.floor((bounds.maxY + epsilon) / this.CELL_SIZE)
-
-          for (let ix = minIndexX; ix <= maxIndexX; ix++) {
-            for (let iy = minIndexY; iy <= maxIndexY; iy++) {
-              const bucketKey = `${ix}x${iy}` as BucketCoordinate
-              let bucketList = this.segmentBuckets.get(bucketKey)
-              if (!bucketList) {
-                bucketList = []
-                this.segmentBuckets.set(bucketKey, bucketList)
-              }
-              bucketList.push(segmentInfo)
-            }
-          }
-        }
-      }
-
-      // --- Index Vias ---
-      if (route.vias && route.vias.length > 0) {
-        for (let i = 0; i < route.vias.length; i++) {
-          const via = route.vias[i]
-          if (via === undefined || via === null) continue // Basic check
-
-          const storedVia: StoredVia = {
-            viaId: `${route.connectionName}-via-${i}`,
-            x: via.x,
-            y: via.y,
-            parentRoute: route,
-          }
-
-          // Vias belong to a single bucket
-          const ix = Math.floor(via.x / this.CELL_SIZE)
-          const iy = Math.floor(via.y / this.CELL_SIZE)
-          const bucketKey = `${ix}x${iy}` as BucketCoordinate
-
-          let bucketList = this.viaBuckets.get(bucketKey)
-          if (!bucketList) {
-            bucketList = []
-            this.viaBuckets.set(bucketKey, bucketList)
-          }
-          bucketList.push(storedVia)
-        }
-      }
+      this.addRoute(route)
     }
     // console.timeEnd("HighDensityRouteSpatialIndex Constructor");
+  }
+
+  private getMembership(connectionName: string): RouteBucketMembership {
+    let membership = this.routeBucketMembership.get(connectionName)
+    if (!membership) {
+      membership = {
+        segmentBucketKeys: new Set(),
+        viaBucketKeys: new Set(),
+      }
+      this.routeBucketMembership.set(connectionName, membership)
+    }
+    return membership
   }
 
   /**
@@ -219,22 +183,21 @@ export class HighDensityRouteSpatialIndex {
       string,
       { route: HighDensityRoute; minDistSq: number }
     >()
-    const checkedSegments = new Set<string>() // Store segmentId
-    const checkedVias = new Set<string>() // Store viaId
+    const stamp = ++this.queryStamp
 
     const queryP1: Point2D = { x: segmentStart.x, y: segmentStart.y }
     const queryP2: Point2D = { x: segmentEnd.x, y: segmentEnd.y }
 
     for (let ix = minIndexX; ix <= maxIndexX; ix++) {
       for (let iy = minIndexY; iy <= maxIndexY; iy++) {
-        const bucketKey = `${ix}x${iy}` as BucketCoordinate
+        const bucketKey = packBucketKey(ix, iy)
 
         // --- Check Segments in Bucket ---
         const segmentBucketList = this.segmentBuckets.get(bucketKey)
         if (segmentBucketList) {
           for (const segmentInfo of segmentBucketList) {
-            if (checkedSegments.has(segmentInfo.segmentId)) continue
-            checkedSegments.add(segmentInfo.segmentId)
+            if (segmentInfo.lastQueryStamp === stamp) continue
+            segmentInfo.lastQueryStamp = stamp
 
             const route = segmentInfo.parentRoute
             const [p1, p2] = segmentInfo.segment // Original points
@@ -279,8 +242,8 @@ export class HighDensityRouteSpatialIndex {
         const viaBucketList = this.viaBuckets.get(bucketKey)
         if (viaBucketList) {
           for (const viaInfo of viaBucketList) {
-            if (checkedVias.has(viaInfo.viaId)) continue
-            checkedVias.add(viaInfo.viaId)
+            if (viaInfo.lastQueryStamp === stamp) continue
+            viaInfo.lastQueryStamp = stamp
 
             const route = viaInfo.parentRoute
             const viaPoint: Point2D = { x: viaInfo.x, y: viaInfo.y }
@@ -329,8 +292,15 @@ export class HighDensityRouteSpatialIndex {
    * @param connectionName The connection name of the route to remove.
    */
   removeRoute(connectionName: string): void {
-    // Remove segments belonging to this route
-    for (const [bucketKey, segments] of this.segmentBuckets) {
+    const membership = this.routeBucketMembership.get(connectionName)
+    if (!membership) {
+      return
+    }
+
+    // Remove segments belonging to this route (only touching its own buckets)
+    for (const bucketKey of membership.segmentBucketKeys) {
+      const segments = this.segmentBuckets.get(bucketKey)
+      if (!segments) continue
       const filtered = segments.filter(
         (seg) => seg.parentRoute.connectionName !== connectionName,
       )
@@ -342,7 +312,9 @@ export class HighDensityRouteSpatialIndex {
     }
 
     // Remove vias belonging to this route
-    for (const [bucketKey, vias] of this.viaBuckets) {
+    for (const bucketKey of membership.viaBucketKeys) {
+      const vias = this.viaBuckets.get(bucketKey)
+      if (!vias) continue
       const filtered = vias.filter(
         (via) => via.parentRoute.connectionName !== connectionName,
       )
@@ -352,6 +324,8 @@ export class HighDensityRouteSpatialIndex {
         this.viaBuckets.set(bucketKey, filtered)
       }
     }
+
+    this.routeBucketMembership.delete(connectionName)
   }
 
   /**
@@ -365,6 +339,7 @@ export class HighDensityRouteSpatialIndex {
     }
 
     const epsilon = 1e-9
+    const membership = this.getMembership(route.connectionName)
 
     // --- Index Segments ---
     if (route.route && route.route.length >= 2) {
@@ -380,9 +355,9 @@ export class HighDensityRouteSpatialIndex {
         const bounds = getSegmentBounds(segment)
 
         const segmentInfo: StoredSegment = {
-          segmentId: `${route.connectionName}-seg-${i}`,
           segment: segment,
           parentRoute: route,
+          lastQueryStamp: 0,
         }
 
         const minIndexX = Math.floor(bounds.minX / this.CELL_SIZE)
@@ -392,13 +367,14 @@ export class HighDensityRouteSpatialIndex {
 
         for (let ix = minIndexX; ix <= maxIndexX; ix++) {
           for (let iy = minIndexY; iy <= maxIndexY; iy++) {
-            const bucketKey = `${ix}x${iy}` as BucketCoordinate
+            const bucketKey = packBucketKey(ix, iy)
             let bucketList = this.segmentBuckets.get(bucketKey)
             if (!bucketList) {
               bucketList = []
               this.segmentBuckets.set(bucketKey, bucketList)
             }
             bucketList.push(segmentInfo)
+            membership.segmentBucketKeys.add(bucketKey)
           }
         }
       }
@@ -411,15 +387,15 @@ export class HighDensityRouteSpatialIndex {
         if (via === undefined || via === null) continue
 
         const storedVia: StoredVia = {
-          viaId: `${route.connectionName}-via-${i}`,
           x: via.x,
           y: via.y,
           parentRoute: route,
+          lastQueryStamp: 0,
         }
 
         const ix = Math.floor(via.x / this.CELL_SIZE)
         const iy = Math.floor(via.y / this.CELL_SIZE)
-        const bucketKey = `${ix}x${iy}` as BucketCoordinate
+        const bucketKey = packBucketKey(ix, iy)
 
         let bucketList = this.viaBuckets.get(bucketKey)
         if (!bucketList) {
@@ -427,6 +403,7 @@ export class HighDensityRouteSpatialIndex {
           this.viaBuckets.set(bucketKey, bucketList)
         }
         bucketList.push(storedVia)
+        membership.viaBucketKeys.add(bucketKey)
       }
     }
   }
@@ -458,19 +435,18 @@ export class HighDensityRouteSpatialIndex {
       string,
       { route: HighDensityRoute; minDistSq: number }
     >()
-    const checkedSegments = new Set<string>()
-    const checkedVias = new Set<string>()
+    const stamp = ++this.queryStamp
 
     for (let ix = minIndexX; ix <= maxIndexX; ix++) {
       for (let iy = minIndexY; iy <= maxIndexY; iy++) {
-        const bucketKey = `${ix}x${iy}` as BucketCoordinate
+        const bucketKey = packBucketKey(ix, iy)
 
         // --- Check Segments ---
         const segmentBucketList = this.segmentBuckets.get(bucketKey)
         if (segmentBucketList) {
           for (const segmentInfo of segmentBucketList) {
-            if (checkedSegments.has(segmentInfo.segmentId)) continue
-            checkedSegments.add(segmentInfo.segmentId)
+            if (segmentInfo.lastQueryStamp === stamp) continue
+            segmentInfo.lastQueryStamp = stamp
 
             const p1_seg = segmentInfo.segment[0]
             const p2_seg = segmentInfo.segment[1]
@@ -512,8 +488,8 @@ export class HighDensityRouteSpatialIndex {
         const viaBucketList = this.viaBuckets.get(bucketKey)
         if (viaBucketList) {
           for (const viaInfo of viaBucketList) {
-            if (checkedVias.has(viaInfo.viaId)) continue
-            checkedVias.add(viaInfo.viaId)
+            if (viaInfo.lastQueryStamp === stamp) continue
+            viaInfo.lastQueryStamp = stamp
 
             const route = viaInfo.parentRoute
             const viaPoint: Point2D = { x: viaInfo.x, y: viaInfo.y }
