@@ -103,14 +103,24 @@ export class SingleHighDensityRouteSolver6_VertHorzLayer_FutureCost extends Sing
       end: { x: number; y: number; z: number }
     }> = []
 
+    // Hoist the route-side net lookup out of the loop: this.connectionName's
+    // net is invariant across future connections. The check below mirrors
+    // ConnectivityMap.areIdsConnected(this.connectionName, name) semantics
+    // exactly: name === this.connectionName is connected; a falsy net on
+    // either side is not connected; otherwise net1 === net2 || net2 === id1.
+    const connMap = this.connMap
+    const connectionName = this.connectionName
+    const connectionNetId = connMap?.getNetConnectedToId?.(connectionName)
+
     for (const futureConnection of this.futureConnections) {
-      const isConnected =
-        futureConnection.connectionName === this.connectionName ||
-        (this.connMap?.areIdsConnected?.(
-          this.connectionName,
-          futureConnection.connectionName,
-        ) ??
-          false)
+      const futureConnectionName = futureConnection.connectionName
+      let isConnected = futureConnectionName === connectionName
+      if (!isConnected && connectionNetId) {
+        const futureNetId = connMap?.getNetConnectedToId?.(futureConnectionName)
+        isConnected =
+          !!futureNetId &&
+          (connectionNetId === futureNetId || futureNetId === connectionName)
+      }
       if (isConnected) continue
 
       const [start, ...rest] = futureConnection.points
