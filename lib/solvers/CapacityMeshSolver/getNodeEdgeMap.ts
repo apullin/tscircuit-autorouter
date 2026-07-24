@@ -7,7 +7,12 @@ export function getNodeEdgeMap(
 
   for (const edge of edges) {
     for (const nodeId of edge.nodeIds) {
-      nodeEdgeMap.set(nodeId, [...(nodeEdgeMap.get(nodeId) ?? []), edge])
+      let nodeEdges = nodeEdgeMap.get(nodeId)
+      if (!nodeEdges) {
+        nodeEdges = []
+        nodeEdgeMap.set(nodeId, nodeEdges)
+      }
+      nodeEdges.push(edge)
     }
   }
 

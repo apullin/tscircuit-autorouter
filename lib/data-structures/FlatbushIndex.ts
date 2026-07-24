@@ -27,7 +27,12 @@ export class FlatbushIndex<T> implements ISpatialIndex<T> {
 
   search(minX: number, minY: number, maxX: number, maxY: number): T[] {
     const ids = this.index.search(minX, minY, maxX, maxY)
-    return ids.map((id) => this.items[id] || null).filter(Boolean) as T[]
+    const results: T[] = []
+    for (let i = 0; i < ids.length; i++) {
+      const item = this.items[ids[i]]
+      if (item) results.push(item)
+    }
+    return results
   }
 
   clear() {
