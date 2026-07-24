@@ -7,6 +7,7 @@ import {
   GlobalDrcBranchPortfolioSolver,
   GlobalDrcForceImproveSolver,
 } from "high-density-repair03/lib"
+import { ParallelGlobalDrcBranchPortfolioSolver } from "lib/solvers/HighDensityRepairSolver/ParallelGlobalDrcBranchPortfolioSolver"
 import { getGlobalInMemoryCache } from "lib/cache/setupGlobalCaches"
 import { CacheProvider } from "lib/cache/types"
 import { ComponentDetectionSolver } from "lib/solvers/ComponentDetectionSolver/ComponentDetectionSolver"
@@ -663,13 +664,13 @@ export class AutoroutingPipelineSolver7_MultiGraph extends BaseSolver {
     ),
     definePipelineStep(
       "exactGeometryDrcForceImproveSolver",
-      GlobalDrcBranchPortfolioSolver,
+      ParallelGlobalDrcBranchPortfolioSolver,
       (cms) => {
         // Scoring variant: the solver only uses this evaluator to rank repair
         // candidates and select branches (all comparisons stay within this
         // evaluator). Final reported DRC results are computed independently
         // via evaluateRelaxedDrc with the strict defaults.
-        const relaxedDrcEvaluator = createPipeline7RelaxedDrcEvaluator({
+        const evaluatorConfig = {
           connections: cms.netToPointPairsSolver?.newConnections ?? [],
           originalConnections: cms.originalSrj.connections,
           layerCount: cms.srj.layerCount,
@@ -678,8 +679,10 @@ export class AutoroutingPipelineSolver7_MultiGraph extends BaseSolver {
           connMap: cms.connMap,
           srjWithPointPairs: cms.srjWithPointPairs!,
           originalSrj: cms.originalSrj,
-          scoring: true,
-        })
+          scoring: true as const,
+        }
+        const relaxedDrcEvaluator =
+          createPipeline7RelaxedDrcEvaluator(evaluatorConfig)
 
         return [
           {
@@ -698,6 +701,7 @@ export class AutoroutingPipelineSolver7_MultiGraph extends BaseSolver {
             viaInPadMaxIterations: 32,
             broadMaxIterations: 8,
             broadPassMultiplier: 3,
+            a2EvaluatorConfig: evaluatorConfig,
           },
         ]
       },
