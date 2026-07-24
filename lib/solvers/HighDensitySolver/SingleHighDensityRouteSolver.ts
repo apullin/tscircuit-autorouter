@@ -689,7 +689,21 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
     }
   }
 
-  computeProgress(currentNode: Node, goalDist: number, isOnLayer: boolean) {
+  /**
+   * BaseSolver.step() calls computeProgress() with NO arguments after every
+   * _step; the 3-arg form is only called internally from _step. Previously
+   * the no-arg call computed Math.atan(NaN) → NaN and overwrote the real
+   * progress set in _step (B2), so portfolio fitness never saw true
+   * single-route progress. Now the no-arg call returns the stored value.
+   * NOTE: changes portfolio scheduling — behavior-changing experiment
+   * (branch perf/b2-progress, benchmark-gated).
+   */
+  computeProgress(
+    currentNode?: Node,
+    goalDist?: number,
+    isOnLayer?: boolean,
+  ): number {
+    if (goalDist === undefined) return this.progress ?? 0
     if (!isOnLayer) goalDist += this.viaPenaltyDistance
     const goalDistPercent = 1 - goalDist / this.straightLineDistance
 
