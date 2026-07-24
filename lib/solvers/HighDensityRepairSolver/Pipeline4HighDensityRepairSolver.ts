@@ -197,7 +197,12 @@ export class Pipeline4HighDensityRepairSolver extends BaseSolver {
   repairedRoutesByIndex = new Map<number, HighDensityRoute>()
   activeSampleIndex = 0
   override activeSubSolver: HighDensityRepairSolver | null = null
-  latestVisualization: GraphicsObject = {}
+  /**
+   * Last sub-solver that ran; only used to lazily produce a visualization
+   * when visualize() is called between sub-solvers (visualize() is expensive
+   * and must not run on the production solve path).
+   */
+  lastSubSolver: HighDensityRepairSolver | null = null
 
   constructor(params: {
     nodeWithPortPoints: NodeWithPortPoints[]
@@ -314,7 +319,6 @@ export class Pipeline4HighDensityRepairSolver extends BaseSolver {
 
     if (this.activeSubSolver) {
       this.activeSubSolver.step()
-      this.latestVisualization = this.activeSubSolver.visualize()
 
       if (this.activeSubSolver.failed) {
         this.failed = true
@@ -360,7 +364,7 @@ export class Pipeline4HighDensityRepairSolver extends BaseSolver {
       sample: sampleEntry.sample,
       margin: this.repairMargin,
     })
-    this.latestVisualization = this.activeSubSolver.visualize()
+    this.lastSubSolver = this.activeSubSolver
   }
 
   getOutput(): HighDensityRoute[] {
@@ -375,7 +379,7 @@ export class Pipeline4HighDensityRepairSolver extends BaseSolver {
     }
 
     if (!this.solved) {
-      return this.latestVisualization
+      return this.lastSubSolver?.visualize() ?? {}
     }
 
     const lines: NonNullable<GraphicsObject["lines"]> = []
