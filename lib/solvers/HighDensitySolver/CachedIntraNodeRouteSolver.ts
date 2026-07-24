@@ -1,5 +1,3 @@
-import objectHash from "object-hash"
-
 import {
   getGlobalInMemoryCache,
   setupGlobalCaches,
@@ -17,10 +15,30 @@ type CacheToIntraNodeSolverTransform = Record<string, never>
 
 const roundCoord = (n: number) => Math.round(n * 200) / 200
 
-const cloneValue = <T>(value: T): T =>
-  typeof structuredClone === "function"
-    ? structuredClone(value)
-    : JSON.parse(JSON.stringify(value))
+/**
+ * Deep clone for plain JSON-ish data (the connection/route payloads cached by
+ * this solver). Copies own enumerable properties recursively — equivalent to
+ * structuredClone for this data, but without the native serialize/deserialize
+ * round trip that showed up in profiles (~60+ candidate solvers per node).
+ */
+const cloneValue = <T>(value: T): T => {
+  if (Array.isArray(value)) {
+    const length = value.length
+    const out = new Array(length)
+    for (let i = 0; i < length; i++) {
+      out[i] = cloneValue(value[i])
+    }
+    return out as T
+  }
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {}
+    for (const key of Object.keys(value)) {
+      out[key] = cloneValue((value as Record<string, unknown>)[key])
+    }
+    return out as T
+  }
+  return value
+}
 
 setupGlobalCaches()
 
@@ -172,7 +190,15 @@ export class CachedIntraNodeRouteSolver
       normalizedConnMap,
     }
 
-    const cacheKey = `intranode-solver:${objectHash(keyData)}`
+    // Deterministic serialization instead of objectHash (recursive SHA-1),
+    // which dominated cache-key cost across ~60+ portfolio candidates per
+    // node. keyData is built with canonical ordering (sorted port points,
+    // sorted hyperparameter entries, fixed literal shapes), so structurally
+    // equal inputs always serialize identically, and JSON string equality is
+    // collision-free — the cache hit/miss pattern (and therefore the routing
+    // result) is unchanged. Keys only live in the per-process in-memory cache;
+    // no persisted cache depends on the previous hash format.
+    const cacheKey = `intranode-solver:${JSON.stringify(keyData)}`
     const cacheToSolveSpaceTransform: CacheToIntraNodeSolverTransform = {}
 
     this.cacheKey = cacheKey
