@@ -14,7 +14,7 @@ import type {
   PcbViaTraceClearanceError,
 } from "circuit-json"
 import {
-  type ConnectivityMap,
+  ConnectivityMap,
   getFullConnectivityMapFromCircuitJson,
 } from "circuit-json-to-connectivity-map"
 import { Point } from "graphics-debug"
@@ -46,17 +46,53 @@ export interface GetDrcErrorsResult {
   locationAwareErrors: LocationAwareDrcError[]
 }
 
+/**
+ * Caches the via-independent net partition (source traces, ports, pads and
+ * pcb_trace/source_trace links) across getDrcErrors calls whose non-via
+ * elements are identical — e.g. DRC repair candidate scoring, where only
+ * route geometry changes while element ids and source links stay fixed.
+ * Per-candidate via connections are always added onto a fresh clone, so the
+ * cached partition is never mutated.
+ */
+export interface DrcConnectivityCache {
+  baseNetMap?: Record<string, string[]>
+}
+
 export interface GetDrcErrorsOptions {
   viaClearance?: number
   traceClearance?: number
   includeTraceContinuity?: boolean
   includeTypedTraceClearance?: boolean
+  /**
+   * Reuses the via-independent connectivity across calls. Only pass this when
+   * every call sees the same non-via circuit elements (see
+   * DrcConnectivityCache); intended for repair candidate scoring.
+   */
+  connectivityCache?: DrcConnectivityCache
+}
+
+const cloneNetMap = (
+  netMap: Record<string, string[]>,
+): Record<string, string[]> => {
+  const cloned: Record<string, string[]> = {}
+  for (const netId in netMap) {
+    cloned[netId] = netMap[netId].slice()
+  }
+  return cloned
 }
 
 const createDrcConnectivityMap = (
   circuitJson: CircuitJson,
+  cache?: DrcConnectivityCache,
 ): ConnectivityMap => {
-  const connMap = getFullConnectivityMapFromCircuitJson(circuitJson)
+  let connMap: ConnectivityMap
+  if (cache) {
+    cache.baseNetMap ??=
+      getFullConnectivityMapFromCircuitJson(circuitJson).netMap
+    connMap = new ConnectivityMap(cloneNetMap(cache.baseNetMap))
+  } else {
+    connMap = getFullConnectivityMapFromCircuitJson(circuitJson)
+  }
   const viaTraceConnections = circuitJson
     .filter(
       (element): element is PcbViaWithTraceId =>
@@ -72,7 +108,10 @@ export const getDrcErrors = (
   circuitJson: CircuitJson,
   options: GetDrcErrorsOptions = {},
 ): GetDrcErrorsResult => {
-  const connMap = createDrcConnectivityMap(circuitJson)
+  const connMap = createDrcConnectivityMap(
+    circuitJson,
+    options.connectivityCache,
+  )
   const viaClearance = Math.max(
     options.viaClearance ?? MIN_VIA_TO_VIA_CLEARANCE,
     MIN_VIA_TO_VIA_CLEARANCE,
