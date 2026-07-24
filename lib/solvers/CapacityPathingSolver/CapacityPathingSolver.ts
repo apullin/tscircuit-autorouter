@@ -46,11 +46,23 @@ export class CapacityPathingSolver extends BaseSolver {
 
   nodeMap: Map<CapacityMeshNodeId, CapacityMeshNode>
   nodeEdgeMap: Map<CapacityMeshNodeId, CapacityMeshEdge[]>
+  /**
+   * Precomputed neighbor nodes for each node (derived from nodeEdgeMap).
+   * Callers must NOT mutate the returned arrays.
+   */
+  nodeAdjacencyMap: Map<CapacityMeshNodeId, CapacityMeshNode[]>
   connectionNameToGoalNodeIds: Map<string, CapacityMeshNodeId[]>
   colorMap: Record<string, string>
   maxDepthOfNodes: number
 
   activeCandidateStraightLineDistance?: number
+
+  /**
+   * When enabled, per-neighbor f/g/h costs are recorded into
+   * debug_lastNodeCostMap for visualization. Off by default because the
+   * bookkeeping allocates per A* expansion.
+   */
+  debugEnabled = false
 
   debug_lastNodeCostMap: Map<
     CapacityMeshNodeId,
@@ -96,6 +108,17 @@ export class CapacityPathingSolver extends BaseSolver {
       this.nodes.map((node) => [node.capacityMeshNodeId, node]),
     )
     this.nodeEdgeMap = getNodeEdgeMap(this.edges)
+    this.nodeAdjacencyMap = new Map()
+    for (const [nodeId, nodeEdges] of this.nodeEdgeMap) {
+      const neighbors: CapacityMeshNode[] = []
+      for (const edge of nodeEdges) {
+        for (const otherNodeId of edge.nodeIds) {
+          if (otherNodeId === nodeId) continue
+          neighbors.push(this.nodeMap.get(otherNodeId)!)
+        }
+      }
+      this.nodeAdjacencyMap.set(nodeId, neighbors)
+    }
     this.maxDepthOfNodes = Math.max(
       ...this.nodes.map((node) => node._depth ?? 0),
     )
@@ -194,12 +217,8 @@ export class CapacityPathingSolver extends BaseSolver {
   }
 
   getNeighboringNodes(node: CapacityMeshNode) {
-    return this.nodeEdgeMap
-      .get(node.capacityMeshNodeId)!
-      .flatMap((edge): CapacityMeshNodeId[] =>
-        edge.nodeIds.filter((n) => n !== node.capacityMeshNodeId),
-      )
-      .map((n) => this.nodeMap.get(n)!)
+    // Precomputed in the constructor; do not mutate the returned array.
+    return this.nodeAdjacencyMap.get(node.capacityMeshNodeId)!
   }
 
   getCapacityPaths() {
@@ -346,11 +365,13 @@ export class CapacityPathingSolver extends BaseSolver {
       const h = this.computeH(currentCandidate, neighborNode, end)
       const f = g + h * this.GREEDY_MULTIPLIER
 
-      this.debug_lastNodeCostMap.set(neighborNode.capacityMeshNodeId, {
-        f,
-        g,
-        h,
-      })
+      if (this.debugEnabled) {
+        this.debug_lastNodeCostMap.set(neighborNode.capacityMeshNodeId, {
+          f,
+          g,
+          h,
+        })
+      }
 
       const newCandidate = {
         prevCandidate: currentCandidate,
