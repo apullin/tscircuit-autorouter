@@ -176,18 +176,37 @@ export class MultiHeadPolyLineIntraNodeSolver extends BaseSolver {
       polyLineVias.push(path.filter((p) => p.z1 !== p.z2))
     }
 
+    // Hoist per-polyline net ids out of the pair loop: a polyline's net is
+    // invariant across pairs. The pair check below mirrors
+    // ConnectivityMap.areIdsConnected semantics exactly: id1 === id2 is
+    // connected; a falsy net on either side is not connected; otherwise
+    // net1 === net2 || net2 === id1.
+    const connMap = this.connMap
+    const polyLineNetIds: Array<string | undefined> = new Array(
+      polyLines.length,
+    )
+    for (let i = 0; i < polyLines.length; i++) {
+      polyLineNetIds[i] = connMap?.getNetConnectedToId(
+        polyLines[i].connectionName,
+      )
+    }
+
     for (let i = 0; i < polyLines.length; i++) {
       const path1SegmentsByLayer = polyLineSegmentsByLayer[i]
       const path1Vias = polyLineVias[i]
+      const connectionNameI = polyLines[i].connectionName
+      const netIdI = polyLineNetIds[i]
       // Start j from i + 1 to compare distinct pairs only once
       for (let j = i + 1; j < polyLines.length; j++) {
-        if (
-          this.connMap?.areIdsConnected(
-            polyLines[i].connectionName,
-            polyLines[j].connectionName,
-          )
-        ) {
-          continue
+        if (connMap) {
+          const connectionNameJ = polyLines[j].connectionName
+          if (connectionNameI === connectionNameJ) continue
+          if (netIdI) {
+            const netIdJ = polyLineNetIds[j]
+            if (netIdJ && (netIdI === netIdJ || netIdJ === connectionNameI)) {
+              continue
+            }
+          }
         }
         const path2SegmentsByLayer = polyLineSegmentsByLayer[j]
         const path2Vias = polyLineVias[j]

@@ -44,6 +44,14 @@ export class TraceSimplificationSolver extends BaseSolver {
 
   hdRoutes: HighDensityRoute[] = []
 
+  /**
+   * Obstacles pre-filtered to multilayer ones, computed once at
+   * construction. isMultilayerObstacle is a pure function of the obstacle
+   * and every consumer below requires it, so this order-preserving filter
+   * cannot change find/some results.
+   */
+  private multilayerObstacles: Obstacle[]
+
   simplificationPipelineLoops = 0
 
   MAX_SIMPLIFICATION_PIPELINE_LOOPS: number = 2
@@ -93,6 +101,9 @@ export class TraceSimplificationSolver extends BaseSolver {
         simplificationConfig.layerCount,
       ),
     }
+    this.multilayerObstacles = this.simplificationConfig.obstacles.filter(
+      isMultilayerObstacle,
+    )
     this.hdRoutes = this.markThroughObstacleSegments(
       simplificationConfig.hdRoutes,
     )
@@ -100,72 +111,113 @@ export class TraceSimplificationSolver extends BaseSolver {
   }
 
   private isSameNetObstacle(route: HighDensityRoute, obstacle: Obstacle) {
-    return obstacle.connectedTo.some(
-      (connectedId) =>
-        connectedId === route.connectionName ||
-        connectedId === route.rootConnectionName ||
-        this.simplificationConfig.connMap.areIdsConnected(
-          route.connectionName,
-          connectedId,
-        ) ||
-        (route.rootConnectionName !== undefined &&
-          this.simplificationConfig.connMap.areIdsConnected(
-            route.rootConnectionName,
-            connectedId,
-          )),
-    )
+    const { connMap } = this.simplificationConfig
+    const connectionName = route.connectionName
+    const rootConnectionName = route.rootConnectionName
+    // Hoist the route-side net lookups out of the connectedTo loop: they are
+    // invariant per (route, obstacle) pair. The checks below mirror
+    // connMap.areIdsConnected semantics exactly: id1 === id2 is connected; a
+    // falsy net on either side is not connected; otherwise
+    // net1 === net2 || net2 === id1.
+    const connectionNetId = connMap.getNetConnectedToId(connectionName)
+    const rootNetId =
+      rootConnectionName !== undefined
+        ? connMap.getNetConnectedToId(rootConnectionName)
+        : undefined
+    const connectedTo = obstacle.connectedTo
+    for (let i = 0; i < connectedTo.length; i++) {
+      const connectedId = connectedTo[i]!
+      if (
+        connectedId === connectionName ||
+        connectedId === rootConnectionName
+      ) {
+        return true
+      }
+      if (!connectionNetId && !rootNetId) continue
+      const connectedNetId = connMap.getNetConnectedToId(connectedId)
+      if (!connectedNetId) continue
+      if (
+        connectionNetId &&
+        (connectionNetId === connectedNetId ||
+          connectedNetId === connectionName)
+      ) {
+        return true
+      }
+      if (
+        rootConnectionName !== undefined &&
+        rootNetId &&
+        (rootNetId === connectedNetId || connectedNetId === rootConnectionName)
+      ) {
+        return true
+      }
+    }
+    return false
   }
 
   private getSameNetObstacleForSegment(
-    route: HighDensityRoute,
+    sameNetObstacles: ReadonlyArray<Obstacle>,
     start: { x: number; y: number },
     end: { x: number; y: number },
   ) {
-    return this.simplificationConfig.obstacles.find(
-      (obstacle) =>
-        isMultilayerObstacle(obstacle) &&
-        this.isSameNetObstacle(route, obstacle) &&
+    for (let i = 0; i < sameNetObstacles.length; i++) {
+      const obstacle = sameNetObstacles[i]!
+      if (
         pointInsideObstacle(start, obstacle) &&
-        pointInsideObstacle(end, obstacle),
-    )
+        pointInsideObstacle(end, obstacle)
+      ) {
+        return obstacle
+      }
+    }
+    return undefined
   }
 
   private isViaInsideSameNetObstacle(
-    route: HighDensityRoute,
+    sameNetObstacles: ReadonlyArray<Obstacle>,
     via: { x: number; y: number },
   ) {
-    return this.simplificationConfig.obstacles.some(
-      (obstacle) =>
-        isMultilayerObstacle(obstacle) &&
-        this.isSameNetObstacle(route, obstacle) &&
-        pointInsideObstacle(via, obstacle),
-    )
+    for (let i = 0; i < sameNetObstacles.length; i++) {
+      if (pointInsideObstacle(via, sameNetObstacles[i]!)) return true
+    }
+    return false
   }
 
   markThroughObstacleSegments(
     routes: ReadonlyArray<HighDensityRoute>,
   ): HighDensityRoute[] {
-    return routes.map((route) => ({
-      ...route,
-      route: route.route.map((point, index, points) => {
-        const nextPoint = points[index + 1]
-        if (
-          nextPoint &&
-          point.z !== nextPoint.z &&
-          this.getSameNetObstacleForSegment(route, point, nextPoint)
-        ) {
-          return {
-            ...point,
-            toNextSegmentType: "through_obstacle" as const,
+    return routes.map((route) => {
+      // Resolve the same-net multilayer obstacles once per route: route
+      // connection names and obstacle nets are invariant across the route's
+      // segments and vias. Order is preserved, so find/some semantics are
+      // unchanged.
+      const sameNetObstacles = this.multilayerObstacles.filter((obstacle) =>
+        this.isSameNetObstacle(route, obstacle),
+      )
+      return {
+        ...route,
+        route: route.route.map((point, index, points) => {
+          const nextPoint = points[index + 1]
+          if (
+            nextPoint &&
+            point.z !== nextPoint.z &&
+            this.getSameNetObstacleForSegment(
+              sameNetObstacles,
+              point,
+              nextPoint,
+            )
+          ) {
+            return {
+              ...point,
+              toNextSegmentType: "through_obstacle" as const,
+            }
           }
-        }
 
-        return { ...point }
-      }),
-      vias: route.vias.filter(
-        (via) => !this.isViaInsideSameNetObstacle(route, via),
-      ),
-    }))
+          return { ...point }
+        }),
+        vias: route.vias.filter(
+          (via) => !this.isViaInsideSameNetObstacle(sameNetObstacles, via),
+        ),
+      }
+    })
   }
 
   _step() {
