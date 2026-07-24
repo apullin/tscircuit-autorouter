@@ -95,5 +95,9 @@
     "fast-json-stable-stringify": "^2.1.0",
     "object-hash": "^3.0.0",
     "stack-svgs": "^0.0.1"
+  },
+  "patchedDependencies": {
+    "@tscircuit/checks@0.0.145": "perf-patches/bun-tscircuit-checks@0.0.145.patch",
+    "circuit-json-to-connectivity-map@0.0.19": "perf-patches/bun-circuit-json-to-connectivity-map@0.0.19.patch"
   }
 }
