@@ -1,5 +1,7 @@
 import type { DrcEvaluator } from "high-density-repair03/lib"
 import { evaluateRelaxedDrc } from "lib/testing/evaluate-relaxed-drc"
+import type { DrcConnectivityCache } from "lib/testing/getDrcErrors"
+import type { CircuitJsonScaffoldCache } from "lib/testing/utils/convertToCircuitJson"
 import type { SimpleRouteJson } from "lib/types"
 import {
   convertPipeline7HdRoutesToSimplifiedPcbTraces,
@@ -11,8 +13,24 @@ export const createPipeline7RelaxedDrcEvaluator = (
   conversionOptions: Omit<ConvertPipeline7HdRoutesOptions, "hdRoutes"> & {
     srjWithPointPairs: SimpleRouteJson
     originalSrj: SimpleRouteJson
+    /**
+     * Creates a faster scoring-variant evaluator for ranking repair
+     * candidates: skips the trace-contiguity check (repair moves cannot fix
+     * contiguity errors) and caches route-invariant connectivity/scaffolding
+     * across candidate evaluations. Never use a scoring evaluator for final
+     * (reported) DRC results — those must include contiguity errors.
+     */
+    scoring?: boolean
   },
 ): DrcEvaluator => {
+  const { scoring, ...restConversionOptions } = conversionOptions
+  const connectivityCache: DrcConnectivityCache | undefined = scoring
+    ? {}
+    : undefined
+  const scaffoldCache: CircuitJsonScaffoldCache | undefined = scoring
+    ? {}
+    : undefined
+
   return ({ routes, hdRoutes }) => {
     const evaluatedRoutes = routes ?? hdRoutes
     if (!evaluatedRoutes) {
@@ -20,13 +38,16 @@ export const createPipeline7RelaxedDrcEvaluator = (
     }
 
     const traces = convertPipeline7HdRoutesToSimplifiedPcbTraces({
-      ...conversionOptions,
+      ...restConversionOptions,
       hdRoutes: evaluatedRoutes,
     })
     const { errors, errorsWithCenters } = evaluateRelaxedDrc({
-      inputSrj: conversionOptions.originalSrj,
-      srjWithPointPairs: conversionOptions.srjWithPointPairs,
+      inputSrj: restConversionOptions.originalSrj,
+      srjWithPointPairs: restConversionOptions.srjWithPointPairs,
       traces,
+      ...(scoring
+        ? { includeTraceContinuity: false, connectivityCache, scaffoldCache }
+        : {}),
     })
 
     return {

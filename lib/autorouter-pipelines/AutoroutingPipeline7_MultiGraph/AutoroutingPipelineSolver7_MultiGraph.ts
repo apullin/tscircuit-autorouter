@@ -665,6 +665,10 @@ export class AutoroutingPipelineSolver7_MultiGraph extends BaseSolver {
       "exactGeometryDrcForceImproveSolver",
       GlobalDrcBranchPortfolioSolver,
       (cms) => {
+        // Scoring variant: the solver only uses this evaluator to rank repair
+        // candidates and select branches (all comparisons stay within this
+        // evaluator). Final reported DRC results are computed independently
+        // via evaluateRelaxedDrc with the strict defaults.
         const relaxedDrcEvaluator = createPipeline7RelaxedDrcEvaluator({
           connections: cms.netToPointPairsSolver?.newConnections ?? [],
           originalConnections: cms.originalSrj.connections,
@@ -674,6 +678,7 @@ export class AutoroutingPipelineSolver7_MultiGraph extends BaseSolver {
           connMap: cms.connMap,
           srjWithPointPairs: cms.srjWithPointPairs!,
           originalSrj: cms.originalSrj,
+          scoring: true,
         })
 
         return [
