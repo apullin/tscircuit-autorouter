@@ -626,11 +626,25 @@ function extractViasFromRoutes(
  * @param srjWithPointPairs The SimpleRouteJson created by the NetToPointPairsSolver
  * @param routes The SimplifiedPcbTraces or HighDensityRoutes to convert
  */
+/**
+ * Caches the route-invariant scaffolding elements (source traces, pcb ports,
+ * pads/plated holes) across conversions of the same srj — e.g. DRC repair
+ * candidate scoring, where only the routed traces/vias change per call.
+ * Note: source_trace connected_source_net_ids are derived from the first
+ * call's route endpoints; repair moves keep endpoints inside their connecting
+ * obstacle, so this is stable for scoring purposes.
+ */
+export type CircuitJsonScaffoldCache = {
+  elements?: AnyCircuitElement[]
+}
+
 export type ConvertToCircuitJsonOptions = {
   minTraceWidth?: number
   minViaDiameter?: number
   minViaHoleDiameter?: number
   originalSrj?: SimpleRouteJson
+  /** Only pass when every call uses the same srj scaffolding (see CircuitJsonScaffoldCache). */
+  scaffoldCache?: CircuitJsonScaffoldCache
 }
 
 export function convertToCircuitJson(
@@ -643,6 +657,7 @@ export function convertToCircuitJson(
     minViaDiameter,
     minViaHoleDiameter,
     originalSrj,
+    scaffoldCache,
   } = options
   const viaDimensions = getViaDimensions(srjWithPointPairs)
   const resolvedMinViaDiameter = minViaDiameter ?? viaDimensions.padDiameter
@@ -659,14 +674,21 @@ export function convertToCircuitJson(
   // Start with empty circuit JSON
   const circuitJson: AnyCircuitElement[] = []
 
-  // Add source traces from connection information
-  circuitJson.push(...createSourceTraces(srjWithPointPairs, routes))
-
-  // Add PCB ports for connection points
-  circuitJson.push(...createPcbPorts(srjWithPointPairs))
-
-  // Add PCB pads / plated holes represented by SRJ obstacles
-  circuitJson.push(...createPcbPadElements(originalSrj ?? srjWithPointPairs))
+  let scaffoldElements = scaffoldCache?.elements
+  if (!scaffoldElements) {
+    scaffoldElements = [
+      // Add source traces from connection information
+      ...createSourceTraces(srjWithPointPairs, routes),
+      // Add PCB ports for connection points
+      ...createPcbPorts(srjWithPointPairs),
+      // Add PCB pads / plated holes represented by SRJ obstacles
+      ...createPcbPadElements(originalSrj ?? srjWithPointPairs),
+    ]
+    if (scaffoldCache) {
+      scaffoldCache.elements = scaffoldElements
+    }
+  }
+  circuitJson.push(...scaffoldElements)
 
   // Extract and add vias as independent pcb_via elements
   circuitJson.push(
