@@ -20,6 +20,11 @@ import {
   HyperParameterSupervisorSolver,
   SupervisedSolver,
 } from "../HyperParameterSupervisorSolver"
+import {
+  getGlobalRacePool,
+  parallelPortfolioEnabled,
+} from "../../parallel/PortfolioRacePool"
+import { extractWinningRoutes } from "./extractWinningRoutes"
 import { repairDisconnectedSameRootPortPoints } from "./repairDisconnectedSameRootPortPoints"
 
 // Match the existing six-ordering portfolio used by the other intra-node
@@ -381,7 +386,63 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
     return this.getTotalCandidateWork() >= expansionWorkBudget
   }
 
+  /**
+   * P1 parallel race (perf-artifacts/parallelism-design.md): dispatch every
+   * portfolio candidate to the worker pool and take the first solve. Enabled
+   * by TS_PARALLEL_PORTFOLIO=N (worker count). NOT result-identical to the
+   * sequential fitness schedule (winner identity can change) — quality-gated.
+   */
+  private parallelRaceStep() {
+    // Compute the same hyperparameter set the sequential supervisor would
+    // construct (including adaptive-expansion candidates) without building
+    // any solver in-process.
+    const defs = this.getHyperParameterDefs()
+    const combinationDefs = this.getCombinationDefs() ?? [
+      defs.map((def) => def.name),
+    ]
+    const hyperParameterList: Array<Record<string, any>> = []
+    for (const combinationDef of combinationDefs) {
+      hyperParameterList.push(
+        ...this.getHyperParameterCombinations(
+          defs.filter((hpd) => combinationDef.includes(hpd.name)),
+        ),
+      )
+    }
+    for (const shuffleSeed of ORDERING_SHUFFLE_SEEDS.slice(1)) {
+      hyperParameterList.push({ HIGH_DENSITY_A01: true, SHUFFLE_SEED: shuffleSeed })
+    }
+
+    const constructorParams = this.constructorParams as unknown as Record<
+      string,
+      unknown
+    >
+    const outcome = getGlobalRacePool().race(
+      hyperParameterList.map((hyperParameters) => ({
+        hyperParameters,
+        constructorParams,
+      })),
+    )
+
+    if (outcome.status === "solved") {
+      // Worker already applied extractWinningRoutes post-processing.
+      this.solvedRoutes = outcome.routes
+      this.solved = true
+      this.progress = 1
+      this.stats.parallelRace = true
+      this.stats.parallelRaceWinnerIterations = outcome.iterations
+    } else {
+      this.failed = true
+      this.error = `All candidates failed in parallel race. ${outcome.errors
+        .slice(0, 3)
+        .join("; ")}`
+    }
+  }
+
   override _step() {
+    if (parallelPortfolioEnabled()) {
+      this.parallelRaceStep()
+      return
+    }
     if (!this.supervisedSolvers) this.initializeSolvers()
 
     if (
@@ -552,30 +613,8 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
         expanded: this.adaptiveSearchExpanded,
       })
     }
-    let routes: HighDensityIntraNodeRoute[]
-    if (
-      (solver.solver as any) instanceof HighDensitySolverA01 ||
-      (solver.solver as any) instanceof HighDensityA03Solver
-    ) {
-      routes = (solver.solver as any).getOutput()
-    } else {
-      routes = solver.solver.solvedRoutes
-    }
-    const routesWithRootConnectionNames = routes.map((route) => {
-      const matchingPortPoint = this.nodeWithPortPoints.portPoints.find(
-        (p) => p.connectionName === route.connectionName,
-      )
-      if (matchingPortPoint?.rootConnectionName) {
-        return {
-          ...route,
-          rootConnectionName: matchingPortPoint.rootConnectionName,
-        }
-      }
-      return route
-    })
-
-    this.solvedRoutes = repairDisconnectedSameRootPortPoints(
-      routesWithRootConnectionNames,
+    this.solvedRoutes = extractWinningRoutes(
+      solver.solver,
       this.nodeWithPortPoints,
     )
   }
