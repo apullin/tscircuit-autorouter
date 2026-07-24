@@ -11,6 +11,26 @@ export class SingleHighDensityRouteSolver6_VertHorzLayer_FutureCost extends Sing
   FLIP_TRACE_ALIGNMENT_DIRECTION = false
   FUTURE_CONNECTION_VIA_TRACE_CLEARANCE = 0.1
 
+  /**
+   * Built once at construction: futureConnections and connMap are
+   * constructor inputs and are not mutated while this solver is active.
+   */
+  futureConnectionSegments: Array<{
+    connectionName: string
+    start: { x: number; y: number; z: number }
+    end: { x: number; y: number; z: number }
+  }>
+
+  /**
+   * Single-entry memo shared between computeG and computeH, which the base
+   * class calls back-to-back with the same freshly created node. Node
+   * positions/parents never change after creation, so a stale hit could only
+   * return exactly what a recompute would.
+   */
+  private sharedCostNode: Node | null = null
+  private sharedCostGoalDist = 0
+  private sharedCostFutureConnectionPenalty = 0
+
   constructor(
     opts: ConstructorParameters<typeof SingleHighDensityRouteSolver>[0],
   ) {
@@ -31,6 +51,10 @@ export class SingleHighDensityRouteSolver6_VertHorzLayer_FutureCost extends Sing
     const routeCount = Math.max(1, this.numRoutes)
     this.VIA_PENALTY_FACTOR =
       0.3 * (viasThatCanFitHorz / routeCount) * this.VIA_PENALTY_FACTOR_2
+    // VIA_PENALTY_FACTOR (and VIA_PENALTY_FACTOR_2 via hyperparameters) are
+    // final at this point, so the cached penalty distance can be refreshed
+    this.updateViaPenaltyDistance()
+    this.futureConnectionSegments = this.getFutureConnectionSegments()
   }
 
   getClosestFutureConnectionPoint(node: Node) {
@@ -96,7 +120,7 @@ export class SingleHighDensityRouteSolver6_VertHorzLayer_FutureCost extends Sing
       this.traceThickness / 2 +
       this.FUTURE_CONNECTION_VIA_TRACE_CLEARANCE
 
-    for (const segment of this.getFutureConnectionSegments()) {
+    for (const segment of this.futureConnectionSegments) {
       if (
         pointToSegmentDistance(node, segment.start, segment.end) <
         minCenterlineDistance
@@ -132,10 +156,30 @@ export class SingleHighDensityRouteSolver6_VertHorzLayer_FutureCost extends Sing
     return 1 - Math.exp((-goalDist / this.straightLineDistance) * 5)
   }
 
-  getFutureConnectionPenalty(node: Node, isVia: boolean) {
+  /**
+   * computeG and computeH both need distance(node, B) and the future
+   * connection penalty for the same node with identical arguments; compute
+   * them once per node and share.
+   */
+  private ensureSharedNodeCosts(node: Node) {
+    if (this.sharedCostNode === node) return
+    const goalDist = distance(node, this.B)
+    this.sharedCostNode = node
+    this.sharedCostGoalDist = goalDist
+    this.sharedCostFutureConnectionPenalty = this.getFutureConnectionPenalty(
+      node,
+      node.z !== node.parent?.z,
+      goalDist,
+    )
+  }
+
+  getFutureConnectionPenalty(
+    node: Node,
+    isVia: boolean,
+    goalDist = distance(node, this.B),
+  ) {
     let futureConnectionPenalty = 0
     const closestFuturePoint = this.getClosestFutureConnectionPoint(node)
-    const goalDist = distance(node, this.B)
     if (closestFuturePoint) {
       const distToFuturePoint = distance(node, closestFuturePoint)
       if (goalDist <= distToFuturePoint) return 0
@@ -152,17 +196,14 @@ export class SingleHighDensityRouteSolver6_VertHorzLayer_FutureCost extends Sing
   }
 
   computeH(node: Node) {
-    const goalDist = distance(node, this.B) ** 1.6
-    const goalDistRatio = goalDist / this.straightLineDistance
+    this.ensureSharedNodeCosts(node)
+    const goalDist = this.sharedCostGoalDist ** 1.6
 
     // Base cost from original function
     const baseCost =
       goalDist + (node.z !== this.B.z ? this.viaPenaltyDistance : 0)
 
-    return (
-      baseCost +
-      this.getFutureConnectionPenalty(node, node.z !== node.parent?.z)
-    )
+    return baseCost + this.sharedCostFutureConnectionPenalty
   }
 
   computeG(node: Node) {
@@ -187,9 +228,7 @@ export class SingleHighDensityRouteSolver6_VertHorzLayer_FutureCost extends Sing
       dist +
       misalignedDist * this.MISALIGNED_DIST_PENALTY_FACTOR
 
-    return (
-      baseCost +
-      this.getFutureConnectionPenalty(node, node.z !== node.parent?.z)
-    )
+    this.ensureSharedNodeCosts(node)
+    return baseCost + this.sharedCostFutureConnectionPenalty
   }
 }
