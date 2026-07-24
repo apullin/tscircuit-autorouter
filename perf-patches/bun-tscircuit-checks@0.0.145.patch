@@ -1,0 +1,151 @@
+diff --git a/dist/index.js b/dist/index.js
+index 9fd93764..2ad45474 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -751,8 +751,14 @@ var getTraceObstacleClearance = (segment, obstacle) => {
+       radius: obstacle.outer_diameter / 2
+     } : getCircleShape(obstacle);
+     const closestPoint = pointToSegmentClosestPoint2(circle, start, end);
++    const distDx = closestPoint.x - circle.x;
++    const distDy = closestPoint.y - circle.y;
++    const segmentToCircleDist = Math.max(
++      0,
++      Math.sqrt(distDx * distDx + distDy * distDy) - circle.radius
++    );
+     return {
+-      gap: segmentToCircleMinDistance(start, end, circle) - traceRadius,
++      gap: segmentToCircleDist - traceRadius,
+       center: getCenterBetweenCopperEdges({
+         tracePoint: closestPoint,
+         obstaclePoint: circle,
+@@ -1289,6 +1295,21 @@ function checkEachPcbTraceNonOverlapping(circuitJson, {
+     return `PCB trace ${traceName} is too close to ${otherName} (gap: ${gap.toFixed(3)}mm)`;
+   };
+   const errorIds = /* @__PURE__ */ new Set();
++  const netIdCache = /* @__PURE__ */ new Map();
++  const getCachedNetId = (id) => {
++    if (netIdCache.has(id)) return netIdCache.get(id);
++    const netId = connMap.getNetConnectedToId(id);
++    netIdCache.set(id, netId);
++    return netId;
++  };
++  const idsShareNet = (id1, id2) => {
++    if (id1 === id2) return true;
++    const netId1 = getCachedNetId(id1);
++    if (!netId1) return false;
++    const netId2 = getCachedNetId(id2);
++    if (!netId2) return false;
++    return netId1 === netId2 || netId2 === id1;
++  };
+   for (const segmentA of pcbTraceSegments) {
+     const requiredMargin = minClearance;
+     const bounds = getCollidableBounds(segmentA);
+@@ -1298,13 +1319,10 @@ function checkEachPcbTraceNonOverlapping(circuitJson, {
+     );
+     if (segmentA.x1 === segmentA.x2 && segmentA.y1 === segmentA.y2) continue;
+     for (const obj of nearbyObjects) {
+-      if (!getLayersOfPcbElement(obj).includes(segmentA.layer)) {
+-        continue;
+-      }
+       if (obj.type === "pcb_trace_segment") {
+         const segmentB = obj;
+         if (segmentA.layer !== segmentB.layer) continue;
+-        if (connMap.areIdsConnected(segmentA.pcb_trace_id, segmentB.pcb_trace_id))
++        if (idsShareNet(segmentA.pcb_trace_id, segmentB.pcb_trace_id))
+           continue;
+         const gap2 = segmentToSegmentMinDistance3(
+           { x: segmentA.x1, y: segmentA.y1 },
+@@ -1338,8 +1356,11 @@ function checkEachPcbTraceNonOverlapping(circuitJson, {
+         });
+         continue;
+       }
++      if (!getLayersOfPcbElement(obj).includes(segmentA.layer)) {
++        continue;
++      }
+       const primaryObjId = getPrimaryId(obj);
+-      if (connMap.areIdsConnected(
++      if (idsShareNet(
+         segmentA.pcb_trace_id,
+         "pcb_trace_id" in obj ? obj.pcb_trace_id : primaryObjId
+       ))
+@@ -1780,6 +1801,7 @@ function checkSameNetViaSpacing(circuitJson, {
+   const board = getPcbBoard(circuitJson);
+   minClearance ??= getBoardDrcValue(board, "min_via_hole_edge_to_via_hole_edge_clearance") ?? jlcMinTolerances.min_via_hole_edge_to_via_hole_edge_clearance;
+   connMap ??= getFullConnectivityMapFromCircuitJson3(circuitJson);
++  const viaNetIds = vias.map((via) => connMap.getNetConnectedToId(via.pcb_via_id));
+   const errors = [];
+   const reported = /* @__PURE__ */ new Set();
+   for (let i = 0; i < vias.length; i++) {
+@@ -1787,7 +1809,9 @@ function checkSameNetViaSpacing(circuitJson, {
+       const viaA = vias[i];
+       const viaB = vias[j];
+       if (viasAreAtSameLocation(viaA, viaB)) continue;
+-      if (!connMap.areIdsConnected(viaA.pcb_via_id, viaB.pcb_via_id)) continue;
++      const netIdA = viaNetIds[i];
++      const netIdB = viaNetIds[j];
++      if (!(viaA.pcb_via_id === viaB.pcb_via_id || netIdA && netIdB && (netIdA === netIdB || netIdB === viaA.pcb_via_id))) continue;
+       const gap = distance2(viaA, viaB) - viaA.hole_diameter / 2 - viaB.hole_diameter / 2;
+       if (gap + EPSILON >= minClearance) continue;
+       const pairId = [viaA.pcb_via_id, viaB.pcb_via_id].sort().join("_");
+@@ -1831,6 +1855,7 @@ function checkDifferentNetViaSpacing(circuitJson, {
+   const board = getPcbBoard(circuitJson);
+   minClearance ??= getBoardDrcValue(board, "min_via_hole_edge_to_via_hole_edge_clearance") ?? jlcMinTolerances.min_via_hole_edge_to_via_hole_edge_clearance;
+   connMap ??= getFullConnectivityMapFromCircuitJson4(circuitJson);
++  const viaNetIds = vias.map((via) => connMap.getNetConnectedToId(via.pcb_via_id));
+   const errors = [];
+   const reported = /* @__PURE__ */ new Set();
+   for (let i = 0; i < vias.length; i++) {
+@@ -1838,7 +1863,9 @@ function checkDifferentNetViaSpacing(circuitJson, {
+       const viaA = vias[i];
+       const viaB = vias[j];
+       if (viasAreAtSameLocation(viaA, viaB)) continue;
+-      if (connMap.areIdsConnected(viaA.pcb_via_id, viaB.pcb_via_id)) continue;
++      const netIdA = viaNetIds[i];
++      const netIdB = viaNetIds[j];
++      if (viaA.pcb_via_id === viaB.pcb_via_id || netIdA && netIdB && (netIdA === netIdB || netIdB === viaA.pcb_via_id)) continue;
+       const gap = distance2(viaA, viaB) - viaA.hole_diameter / 2 - viaB.hole_diameter / 2;
+       if (gap + EPSILON >= minClearance) continue;
+       const pairId = [viaA.pcb_via_id, viaB.pcb_via_id].sort().join("_");
+@@ -2633,12 +2660,39 @@ function checkViaTraceClearance(circuitJson, {
+   const board = getPcbBoard(circuitJson);
+   minClearance ??= getBoardDrcValue(board, "min_trace_to_pad_edge_clearance") ?? jlcMinTolerances.min_trace_to_pad_edge_clearance;
+   connMap ??= getFullConnectivityMapFromCircuitJson10(circuitJson);
++  let maxTraceRadius = 0;
++  const segmentNetIds = new Array(segments.length);
++  for (let i = 0; i < segments.length; i++) {
++    const radius = segments[i].thickness / 2;
++    if (radius > maxTraceRadius) maxTraceRadius = radius;
++    segmentNetIds[i] = connMap.getNetConnectedToId(segments[i].pcb_trace_id);
++  }
++  const spatialIndex = new SpatialObjectIndex({
++    objects: segments,
++    getBounds: getCollidableBounds
++  });
+   const errors = /* @__PURE__ */ new Map();
+   const overlappingPairIds = /* @__PURE__ */ new Set();
+   for (const via of vias) {
+-    for (const segment of segments) {
+-      if (!getLayersOfPcbElement(via).includes(segment.layer)) continue;
+-      if (connMap.areIdsConnected(segment.pcb_trace_id, via.pcb_via_id))
++    const viaLayers = getLayersOfPcbElement(via);
++    const viaNetId = connMap.getNetConnectedToId(via.pcb_via_id);
++    const viaRadius = via.outer_diameter / 2;
++    const nearbySegments = spatialIndex.getObjectsInBounds(
++      {
++        minX: via.x - viaRadius,
++        minY: via.y - viaRadius,
++        maxX: via.x + viaRadius,
++        maxY: via.y + viaRadius
++      },
++      minClearance + maxTraceRadius
++    );
++    nearbySegments.sort(
++      (a, b) => Number(a.spatialIndexId) - Number(b.spatialIndexId)
++    );
++    for (const segment of nearbySegments) {
++      if (!viaLayers.includes(segment.layer)) continue;
++      const segmentNetId = segmentNetIds[Number(segment.spatialIndexId)];
++      if (segment.pcb_trace_id === via.pcb_via_id || segmentNetId && viaNetId && (segmentNetId === viaNetId || viaNetId === segment.pcb_trace_id))
+         continue;
+       const pairId = `${via.pcb_via_id}_${segment.pcb_trace_id}`;
+       const { gap } = getTraceObstacleClearance(segment, via);

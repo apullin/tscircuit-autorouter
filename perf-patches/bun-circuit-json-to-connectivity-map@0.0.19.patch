@@ -1,0 +1,16 @@
+diff --git a/dist/index.js b/dist/index.js
+index 0d8840ac..88550acd 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -97,9 +97,9 @@ var ConnectivityMap = class {
+   }
+   areIdsConnected(id1, id2) {
+     if (id1 === id2) return true;
+-    const netId1 = this.getNetConnectedToId(id1);
++    const netId1 = this.idToNetMap[id1];
+     if (!netId1) return false;
+-    const netId2 = this.getNetConnectedToId(id2);
++    const netId2 = this.idToNetMap[id2];
+     if (!netId2) return false;
+     return netId1 === netId2 || netId2 === id1 || netId2 === id1;
+   }

@@ -1,0 +1,94 @@
+diff --git a/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts b/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts
+index 1ec5bdb7..a86a685f 100644
+--- a/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts
++++ b/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts
+@@ -50,20 +50,43 @@ export const sharesNet = (
+ ) => {
+   if (!right) return false
+   if (left === right) return true
+-  if (connMap?.areIdsConnected(left, right)) return true
+ 
++  // Single lookup per side; equivalent to the previous
++  // areIdsConnected + getConnMapNetId combination (which did up to 5):
++  // connected iff (leftNet && rightNet && leftNet === rightNet) ||
++  //               (leftNet && leftNet === right) || (rightNet && rightNet === left)
+   const leftNetId = getConnMapNetId(connMap, left)
+   const rightNetId = getConnMapNetId(connMap, right)
+-  if (leftNetId && (leftNetId === right || leftNetId === rightNetId)) {
+-    return true
+-  }
+-  if (rightNetId && (rightNetId === left || rightNetId === leftNetId)) {
+-    return true
+-  }
++  if (leftNetId && rightNetId && leftNetId === rightNetId) return true
++  if (leftNetId && leftNetId === right) return true
++  if (rightNetId && rightNetId === left) return true
+ 
+   return false
+ }
+ 
++/**
++ * Pre-resolves an obstacle's connected ids and their net ids into a Set so
++ * hot loops (obstacle x via/segment pairs) pay one Set probe per pair
++ * instead of walking connectedTo with connMap lookups per string.
++ */
++export const createObstacleNetMatcher = (
++  obstacle: SimpleRouteJson["obstacles"][number],
++  connMap?: ConnectivityMap,
++) => {
++  const connectedIds = new Set<string>()
++  for (const connectedTo of obstacle.connectedTo ?? []) {
++    if (!connectedTo) continue
++    connectedIds.add(connectedTo)
++    const netId = getConnMapNetId(connMap, connectedTo)
++    if (netId) connectedIds.add(netId)
++  }
++  return (rootConnectionName: string): boolean => {
++    if (connectedIds.has(rootConnectionName)) return true
++    const rootNetId = getConnMapNetId(connMap, rootConnectionName)
++    return rootNetId !== undefined && connectedIds.has(rootNetId)
++  }
++}
++
+ export const obstacleSharesNet = (
+   rootConnectionName: string,
+   obstacle: SimpleRouteJson["obstacles"][number],
+diff --git a/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts b/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts
+index df666c03..3338f408 100644
+--- a/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts
++++ b/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts
+@@ -7,6 +7,7 @@ import { RELAXED_DRC_OPTIONS } from "./drcPresets"
+ import { PREFERRED_VIA_TO_VIA_CLEARANCE, getDrcErrors } from "./getDrcErrors"
+ import { convertToCircuitJson } from "../utils/convertToCircuitJson"
+ import {
++  createObstacleNetMatcher,
+   getConnMapAwareSrj,
+   getRootConnectionName,
+   obstacleSharesNet,
+@@ -2516,6 +2517,8 @@ const pushMovablesAwayFromObstacles = (
+   for (const obstacle of srj.obstacles) {
+     if (obstacle.isCopperPour) continue
+     const obstacleBounds = getObstacleBounds(obstacle)
++    // Resolve this obstacle's net membership once instead of per via/segment
++    const sharesObstacleNet = createObstacleNetMatcher(obstacle, connMap)
+ 
+     const nearbyViaIndexes = getSpatialCandidateIndexes(
+       viaSpatialIndex,
+@@ -2525,7 +2528,7 @@ const pushMovablesAwayFromObstacles = (
+     for (const viaIndex of nearbyViaIndexes) {
+       const via = vias[viaIndex]
+       if (!via) continue
+-      if (obstacleSharesNet(via.rootConnectionName, obstacle, connMap)) continue
++      if (sharesObstacleNet(via.rootConnectionName)) continue
+       const repulsion = getRectRepulsion(
+         via,
+         obstacle,
+@@ -2552,7 +2555,7 @@ const pushMovablesAwayFromObstacles = (
+       const segment = segments[segmentIndex]
+       if (!segment) continue
+       if (
+-        obstacleSharesNet(segment.rootConnectionName, obstacle, connMap) ||
++        sharesObstacleNet(segment.rootConnectionName) ||
+         !obstacleAppliesToSegment(obstacle, segment)
+       ) {
+         continue
