@@ -49,7 +49,29 @@ const areSameXyPoint = (
 const pointInsideObstacle = (
   point: Pick<Point, "x" | "y">,
   obstacle: Obstacle,
-) => pointToBoxDistance(point, obstacle) <= SAME_NET_OBSTACLE_TOLERANCE
+) => {
+  // Scalar inline of math-utils pointToBoxDistance (identical arithmetic,
+  // no clamp-object allocation) — hot in isThroughObstacleSegment.
+  const halfWidth = obstacle.width / 2
+  const halfHeight = obstacle.height / 2
+  const minX = obstacle.center.x - halfWidth
+  const maxX = obstacle.center.x + halfWidth
+  const minY = obstacle.center.y - halfHeight
+  const maxY = obstacle.center.y + halfHeight
+  if (
+    point.x >= minX &&
+    point.x <= maxX &&
+    point.y >= minY &&
+    point.y <= maxY
+  ) {
+    return true
+  }
+  const closestX = Math.min(Math.max(point.x, minX), maxX)
+  const closestY = Math.min(Math.max(point.y, minY), maxY)
+  const dx = point.x - closestX
+  const dy = point.y - closestY
+  return Math.sqrt(dx * dx + dy * dy) <= SAME_NET_OBSTACLE_TOLERANCE
+}
 
 const isMultilayerObstacle = (obstacle: Obstacle) =>
   (obstacle.__zLayers?.length ?? obstacle.layers?.length ?? 0) > 1
