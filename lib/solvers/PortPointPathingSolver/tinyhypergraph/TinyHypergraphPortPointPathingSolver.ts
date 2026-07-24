@@ -903,16 +903,27 @@ export class TinyHypergraphPortPointPathingSolver extends BaseSolver {
       throw error
     }
 
+    this.solved = this.tinyPipelineSolver.solved
+    this.failed = this.tinyPipelineSolver.failed
+    this.error = this.tinyPipelineSolver.error ?? null
+    this.progress = this.tinyPipelineSolver.progress
+    // Rebuilding the stats object is expensive (object spreads, reduce
+    // closures, per-stage allocation) and runs millions of times. Stats are
+    // only read asynchronously (heartbeats/debug views), so refresh them
+    // periodically and when the solver finishes.
+    if (this.solved || this.failed || this.iterations % 1024 === 0) {
+      this.refreshStats()
+    }
+    this.activeSubSolver = this.tinyPipelineSolver.activeSubSolver ?? null
+  }
+
+  private refreshStats() {
     const optimizeSectionSolver =
       this.tinyPipelineSolver.getSolver<TinyHyperGraphSectionSolver>(
         "optimizeSection",
       )
     const currentTinySolver = this.getCurrentTinySolver()
 
-    this.solved = this.tinyPipelineSolver.solved
-    this.failed = this.tinyPipelineSolver.failed
-    this.error = this.tinyPipelineSolver.error ?? null
-    this.progress = this.tinyPipelineSolver.progress
     this.stats = {
       duplicateCongestedPortSourceCount:
         this.duplicateCongestedPortReport?.duplicatedPorts.length ?? 0,
@@ -939,7 +950,6 @@ export class TinyHypergraphPortPointPathingSolver extends BaseSolver {
       currentStage: this.tinyPipelineSolver.getCurrentStageName(),
       stageStats: this.tinyPipelineSolver.getStageStats(),
     }
-    this.activeSubSolver = this.tinyPipelineSolver.activeSubSolver ?? null
   }
 
   preview(): GraphicsObject {
