@@ -61,7 +61,7 @@ export type ReplayTask = {
 }
 
 /** computeG override semantics from PortfolioSingleIntraNodeSolver. */
-const candidateG = (
+export const candidateG = (
   hyperParameters: Record<string, unknown>,
   iterations: number,
   maxIterations: number,
