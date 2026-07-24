@@ -11,6 +11,26 @@ export class SingleHighDensityRouteSolver6_VertHorzLayer_FutureCost extends Sing
   FLIP_TRACE_ALIGNMENT_DIRECTION = false
   FUTURE_CONNECTION_VIA_TRACE_CLEARANCE = 0.1
 
+  // Every hyperparameter key PortfolioSingleIntraNodeSolver can send is
+  // declared as a class field so the assignment loop in the constructor
+  // never adds new properties (divergent hidden classes across A* instances
+  // made the hot-loop property accesses polymorphic). Keys below are
+  // consumed by other solvers in the portfolio, not by this class.
+  // CELL_SIZE_FACTOR and VIA_PENALTY_FACTOR are declared on the base class.
+  // The loop still accepts (and assigns) unknown keys; those would merely
+  // cause a hidden-class transition again, not be dropped.
+  SINGLE_LAYER_NO_DIFFERENT_ROOT_INTERSECTIONS: boolean | undefined = undefined
+  SHUFFLE_SEED: number | undefined = undefined
+  MULTI_HEAD_POLYLINE_SOLVER: boolean | undefined = undefined
+  SEGMENTS_PER_POLYLINE: number | undefined = undefined
+  BOUNDARY_PADDING: number | undefined = undefined
+  ITERATION_PENALTY: number | undefined = undefined
+  MINIMUM_FINAL_ACCEPTANCE_GAP: number | undefined = undefined
+  THROUGH_OBSTACLE: boolean | undefined = undefined
+  CLOSED_FORM_SINGLE_TRANSITION: boolean | undefined = undefined
+  HIGH_DENSITY_A01: boolean | undefined = undefined
+  HIGH_DENSITY_A03: boolean | undefined = undefined
+
   /**
    * Built once at construction: futureConnections and connMap are
    * constructor inputs and are not mutated while this solver is active.
