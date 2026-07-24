@@ -220,6 +220,8 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
       )
     }
 
+    this.updateViaPenaltyDistance()
+
     const isOnSameEdge =
       (Math.abs(this.A.x - this.bounds.minX) < 0.001 &&
         Math.abs(this.B.x - this.bounds.minX) < 0.001) || // both on left
@@ -309,8 +311,17 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
     }
   }
 
-  get viaPenaltyDistance() {
-    return this.cellStep + this.straightLineDistance * this.VIA_PENALTY_FACTOR
+  /**
+   * Invariant after construction (cellStep, straightLineDistance and
+   * VIA_PENALTY_FACTOR never change afterwards). Subclasses that adjust
+   * VIA_PENALTY_FACTOR in their constructor must call
+   * updateViaPenaltyDistance() again.
+   */
+  viaPenaltyDistance!: number
+
+  protected updateViaPenaltyDistance() {
+    this.viaPenaltyDistance =
+      this.cellStep + this.straightLineDistance * this.VIA_PENALTY_FACTOR
   }
 
   isNodeTooCloseToObstacle(node: Node, margin?: number, isVia?: boolean) {
