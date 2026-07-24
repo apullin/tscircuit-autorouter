@@ -25,6 +25,14 @@ import {
   parallelPortfolioEnabled,
 } from "../../parallel/PortfolioRacePool"
 import { parallelReplayEnabled, runReplayRace } from "../../parallel/replayPool"
+import {
+  parallelReplay2Enabled,
+  runOnlineReplayRace,
+} from "../../parallel/replayPool2"
+import {
+  NativeHighDensitySolverA01,
+  nativeA01Enabled,
+} from "./NativeHighDensitySolverA01"
 import { extractWinningRoutes } from "./extractWinningRoutes"
 import { repairDisconnectedSameRootPortPoints } from "./repairDisconnectedSameRootPortPoints"
 
@@ -33,6 +41,68 @@ import { repairDisconnectedSameRootPortPoints } from "./repairDisconnectedSameRo
 // orderings are introduced only after that portfolio spends its dynamically
 // derived exploration budget or exhausts all of its candidates.
 const ORDERING_SHUFFLE_SEEDS = Array.from({ length: 6 }, (_, seed) => seed)
+
+/**
+ * Lean portfolio (TS_LEAN_PORTFOLIO=1): measured winner distribution on
+ * srj18 sample 8 — top ~12 combos cover ~95% of wins; only 43 of ~106
+ * combos ever win. Running ~15 candidates instead of ~106 cuts the wasted
+ * candidate work (R=9.28 measured). Falls back to the full portfolio on
+ * failure so solvability is preserved. NOT result-identical (winner on some
+ * nodes differs from the full schedule) — quality-gated on benchmarks.
+ */
+const LEAN_HYPERPARAMETERS: Array<Record<string, any>> = [
+  // instant/special-case solvers (cheap, occasionally unique winners)
+  { THROUGH_OBSTACLE: true },
+  { SINGLE_LAYER_NO_DIFFERENT_ROOT_INTERSECTIONS: true },
+  { CLOSED_FORM_SINGLE_TRANSITION: true },
+  // majorCombinations[0] x cellSize 0.5/1 x seeds 0-2 (dominant winners)
+  ...[0.5, 1].flatMap((CELL_SIZE_FACTOR) =>
+    [0, 1, 2].map((SHUFFLE_SEED) => ({
+      CELL_SIZE_FACTOR,
+      SHUFFLE_SEED,
+      FUTURE_CONNECTION_PROX_TRACE_PENALTY_FACTOR: 2,
+      FUTURE_CONNECTION_PROX_VIA_PENALTY_FACTOR: 1,
+      FUTURE_CONNECTION_PROXIMITY_VD: 10,
+      MISALIGNED_DIST_PENALTY_FACTOR: 5,
+    })),
+  ),
+  // majorCombinations[1] x cellSize 1 x seed 0
+  {
+    CELL_SIZE_FACTOR: 1,
+    SHUFFLE_SEED: 0,
+    FUTURE_CONNECTION_PROX_TRACE_PENALTY_FACTOR: 1,
+    FUTURE_CONNECTION_PROX_VIA_PENALTY_FACTOR: 0.5,
+    FUTURE_CONNECTION_PROXIMITY_VD: 5,
+    MISALIGNED_DIST_PENALTY_FACTOR: 2,
+  },
+  // noVias
+  { CELL_SIZE_FACTOR: 2, VIA_PENALTY_FACTOR_2: 10 },
+  // flip trace alignment
+  { FLIP_TRACE_ALIGNMENT_DIRECTION: true, SHUFFLE_SEED: 0 },
+  // native kernels
+  { HIGH_DENSITY_A01: true, SHUFFLE_SEED: 0 },
+  { HIGH_DENSITY_A03: true },
+]
+
+/** TS_LEAN_PORTFOLIO=2: only the single dominant combo + instant solvers. */
+const DOMINANT_HYPERPARAMETERS: Array<Record<string, any>> = [
+  { THROUGH_OBSTACLE: true },
+  { SINGLE_LAYER_NO_DIFFERENT_ROOT_INTERSECTIONS: true },
+  { CLOSED_FORM_SINGLE_TRANSITION: true },
+  {
+    CELL_SIZE_FACTOR: 0.5,
+    SHUFFLE_SEED: 0,
+    FUTURE_CONNECTION_PROX_TRACE_PENALTY_FACTOR: 2,
+    FUTURE_CONNECTION_PROX_VIA_PENALTY_FACTOR: 1,
+    FUTURE_CONNECTION_PROXIMITY_VD: 10,
+    MISALIGNED_DIST_PENALTY_FACTOR: 5,
+  },
+]
+
+const leanPortfolioMode = (): number =>
+  typeof process !== "undefined"
+    ? Number(process.env.TS_LEAN_PORTFOLIO ?? 0) || 0
+    : 0
 
 /** Coordinates a fitness-scheduled portfolio of intra-node routing solvers. */
 export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolver<
@@ -330,11 +400,24 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
     this.stats.dynamicSupervisorIterationLimit = this.MAX_ITERATIONS
   }
 
+  private leanMode = false
+  private leanRetried = false
+
   override initializeSolvers() {
-    super.initializeSolvers()
-    for (const { solver } of this.supervisedSolvers ?? []) {
-      this.initializeCandidateBudget(solver)
-      this.recordCandidateWork(solver)
+    const mode = leanPortfolioMode()
+    if (mode > 0 && !this.leanRetried) {
+      this.leanMode = true
+      this.supervisedSolvers = []
+      const hps = mode === 2 ? DOMINANT_HYPERPARAMETERS : LEAN_HYPERPARAMETERS
+      for (const hp of hps) {
+        this.addSupervisedCandidate(hp)
+      }
+    } else {
+      super.initializeSolvers()
+      for (const { solver } of this.supervisedSolvers ?? []) {
+        this.initializeCandidateBudget(solver)
+        this.recordCandidateWork(solver)
+      }
     }
     this.cachedDynamicExpansionWorkBudget = this.getDynamicExpansionWorkBudget()
     this.stats.dynamicExpansionWorkBudget = this.cachedDynamicExpansionWorkBudget
@@ -394,6 +477,11 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
    * sequential fitness schedule (winner identity can change) — quality-gated.
    */
   private parallelRaceStep() {
+    const replay2Workers = parallelReplay2Enabled()
+    if (replay2Workers > 0) {
+      this.parallelReplay2Step(replay2Workers)
+      return
+    }
     const replayWorkers = parallelReplayEnabled()
     if (replayWorkers > 0) {
       this.parallelReplayStep(replayWorkers)
@@ -509,6 +597,110 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
     }
   }
 
+  /** Sequential supervisor path (shared by all parallel fallbacks). */
+  private parallelRaceStepSequentialFallback() {
+    if (!this.supervisedSolvers) this.initializeSolvers()
+    while (!this.solved && !this.failed) {
+      if (this.iterations >= this.MAX_ITERATIONS) {
+        this.failed = true
+        return
+      }
+      this.iterations++
+      if (
+        !this.adaptiveSearchExpanded &&
+        !this.getSupervisedSolverWithBestFitness()
+      ) {
+        this.expandAdaptiveSearch()
+      }
+      HyperParameterSupervisorSolver.prototype._step.call(this)
+      if (this.activeSubSolver) {
+        this.recordCandidateWork(this.activeSubSolver)
+      }
+      if (!this.solved && !this.failed && this.shouldExpandPortfolio()) {
+        this.expandAdaptiveSearch()
+      }
+    }
+  }
+
+  /**
+   * P2-replay stage 2: online deterministic replay with early exit
+   * (TS_PARALLEL_REPLAY2=N). Workers stream trajectories; the schedule is
+   * replayed online; losers are cancelled as soon as the winner is known.
+   */
+  private parallelReplay2Step(workers: number) {
+    // Hybrid gate: per-node worker dispatch overhead (session broadcast +
+    // factory construction per worker + ~100 task messages) only pays off
+    // when the node has real work. Small nodes stay sequential.
+    const minPoints = Number(process.env.TS_PARALLEL_REPLAY2_MIN_POINTS ?? 6)
+    if (
+      this.nodeWithPortPoints.portPoints.length < minPoints ||
+      !this.connMap
+    ) {
+      this.parallelRaceStepSequentialFallback()
+      return
+    }
+    const defs = this.getHyperParameterDefs()
+    const combinationDefs = this.getCombinationDefs() ?? [
+      defs.map((def) => def.name),
+    ]
+    const hyperParameterList: Array<Record<string, any>> = []
+    for (const combinationDef of combinationDefs) {
+      hyperParameterList.push(
+        ...this.getHyperParameterCombinations(
+          defs.filter((hpd) => combinationDef.includes(hpd.name)),
+        ),
+      )
+    }
+    const initialCount = hyperParameterList.length
+    for (const shuffleSeed of ORDERING_SHUFFLE_SEEDS.slice(1)) {
+      hyperParameterList.push({ HIGH_DENSITY_A01: true, SHUFFLE_SEED: shuffleSeed })
+    }
+
+    const constructorParams = this.constructorParams as unknown as Record<
+      string,
+      unknown
+    >
+    const outcome = runOnlineReplayRace(
+      hyperParameterList.map((hyperParameters) => ({
+        hyperParameters,
+        constructorParams,
+      })),
+      {
+        workers,
+        nodeSegmentCount: this.getNodeSegmentCount(),
+        initialCount,
+        connMap: this.connMap,
+      },
+    )
+
+    if (outcome.winnerIndex !== null && outcome.routes) {
+      this.solvedRoutes = outcome.routes
+      this.solved = true
+      this.progress = 1
+      this.stats.parallelReplay2 = true
+      this.stats.parallelReplay2WinnerIndex = outcome.winnerIndex
+      this.stats.parallelReplay2Dispatched = outcome.stats.dispatched
+      this.stats.parallelReplay2Completed = outcome.stats.completed
+      if (typeof process !== "undefined" && process.env.PERF_SUPERVISOR_STATS) {
+        const g = globalThis as unknown as {
+          __replayStats?: Array<Record<string, unknown>>
+        }
+        g.__replayStats ??= []
+        g.__replayStats.push({
+          nodeId: this.nodeWithPortPoints.capacityMeshNodeId,
+          winnerIndex: outcome.winnerIndex,
+          winnerIterations: -1,
+          winnerHp: JSON.stringify(hyperParameterList[outcome.winnerIndex]),
+          dispatched: outcome.stats.dispatched,
+          completed: outcome.stats.completed,
+        })
+      }
+    } else {
+      this.failed = true
+      this.error = "All candidates failed in parallel replay2"
+    }
+  }
+
   override _step() {
     if (parallelPortfolioEnabled()) {
       this.parallelRaceStep()
@@ -524,6 +716,22 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
     }
 
     super._step()
+
+    // Lean portfolio exhausted: retry this node with the full portfolio so
+    // solvability matches the sequential path.
+    if (this.failed && this.leanMode && !this.leanRetried) {
+      this.leanRetried = true
+      this.leanMode = false
+      this.failed = false
+      this.error = null
+      this.supervisedSolvers = undefined
+      this.adaptiveSearchExpanded = false
+      this.totalCandidateWork = 0
+      this.lastCountedCandidateIterations = new Map()
+      this.cachedDynamicExpansionWorkBudget = null
+      this.initializeSolvers()
+      return
+    }
 
     // super._step() advanced (at most) one candidate: the one it left in
     // activeSubSolver. Fold its new iterations into totalCandidateWork.
@@ -591,6 +799,21 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
     }
 
     if (hyperParameters.HIGH_DENSITY_A01) {
+      if (nativeA01Enabled()) {
+        return new NativeHighDensitySolverA01({
+          nodeWithPortPoints: this.nodeWithPortPoints,
+          cellSizeMm: 0.1,
+          viaDiameter: this.constructorParams.viaDiameter ?? 0.3,
+          traceThickness: this.constructorParams.traceWidth ?? 0.15,
+          traceMargin: 0.1,
+          viaMinDistFromBorder:
+            (this.constructorParams.viaDiameter ?? 0.3) / 2,
+          effort: this.effort,
+          hyperParameters: {
+            shuffleSeed: hyperParameters.SHUFFLE_SEED ?? 0,
+          },
+        }) as any
+      }
       const solver = new HighDensitySolverA01({
         nodeWithPortPoints: this.nodeWithPortPoints,
         cellSizeMm: 0.1,
@@ -685,6 +908,7 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
       }
       g.__supervisorStats.push({
         nodeId: this.nodeWithPortPoints.capacityMeshNodeId,
+        winnerHp: JSON.stringify(solver.hyperParameters),
         winnerIterations: solver.solver.iterations,
         winnerKind: solver.solver.constructor.name,
         totalCandidateWork: this.getTotalCandidateWork(),
