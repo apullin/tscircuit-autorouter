@@ -2,7 +2,10 @@ import type {
   ConnectionHgWithSimpleRouteConnection,
   HgPortPointPathingSolverParams,
 } from "../hgportpointpathingsolver/types"
-import { checkIfConnectionPointIsInRegion } from "../hgportpointpathingsolver/checkIfConnectionPointIsInRegion"
+import {
+  checkIfConnectionPointIsInRegion,
+  CONNECTION_POINT_REGION_TOLERANCE,
+} from "../hgportpointpathingsolver/checkIfConnectionPointIsInRegion"
 import type { TinyRouteNetIndexer } from "./createTinyRouteNetIndexer"
 
 export function getRegionNetIdByRegionId(input: {
@@ -13,6 +16,28 @@ export function getRegionNetIdByRegionId(input: {
 }): Map<string, number> {
   const regionNetCandidates = new Map<string, Set<number>>()
   const netIndexByConnectionAlias = new Map<string, number>()
+
+  // Precomputed per-region bounding boxes (expanded by the containment
+  // tolerance) let us reject nearly every region with four comparisons before
+  // paying for the exact checkIfConnectionPointIsInRegion call. The prune is
+  // conservative: a point outside the expanded bbox has Euclidean distance to
+  // the box greater than the tolerance, so the exact check would return false
+  // anyway. Survivors always run the original exact check — result-identical.
+  const regions = input.params.graph.regions
+  const regionMinX = new Float64Array(regions.length)
+  const regionMaxX = new Float64Array(regions.length)
+  const regionMinY = new Float64Array(regions.length)
+  const regionMaxY = new Float64Array(regions.length)
+  for (let i = 0; i < regions.length; i++) {
+    const d = regions[i].d
+    const halfWidth = d.width / 2
+    const halfHeight = d.height / 2
+    regionMinX[i] = d.center.x - halfWidth - CONNECTION_POINT_REGION_TOLERANCE
+    regionMaxX[i] = d.center.x + halfWidth + CONNECTION_POINT_REGION_TOLERANCE
+    regionMinY[i] = d.center.y - halfHeight - CONNECTION_POINT_REGION_TOLERANCE
+    regionMaxY[i] = d.center.y + halfHeight + CONNECTION_POINT_REGION_TOLERANCE
+  }
+
   for (const connection of input.params.connections) {
     const netId = connection.mutuallyConnectedNetworkId
     const routeNetIndex = input.getNetIndex({
@@ -23,7 +48,16 @@ export function getRegionNetIdByRegionId(input: {
       netIndexByConnectionAlias.set(connectionAlias, routeNetIndex)
     }
     for (const point of connection.simpleRouteConnection.pointsToConnect) {
-      for (const region of input.params.graph.regions) {
+      for (let i = 0; i < regions.length; i++) {
+        if (
+          point.x < regionMinX[i] ||
+          point.x > regionMaxX[i] ||
+          point.y < regionMinY[i] ||
+          point.y > regionMaxY[i]
+        ) {
+          continue
+        }
+        const region = regions[i]
         if (
           !checkIfConnectionPointIsInRegion({
             point,
