@@ -1,7 +1,4 @@
-import {
-  segmentToSegmentMinDistance,
-  pointToSegmentClosestPoint,
-} from "@tscircuit/math-utils"
+import { pointToSegmentClosestPoint } from "@tscircuit/math-utils"
 import { PolyLine2, MHPoint2, Candidate2 } from "./types2"
 import { MultiHeadPolyLineIntraNodeSolver } from "./MultiHeadPolyLineIntraNodeSolver"
 
@@ -237,12 +234,6 @@ export class MultiHeadPolyLineIntraNodeSolver2 extends MultiHeadPolyLineIntraNod
         for (const seg1 of segments1) {
           for (const seg2 of segments2) {
             if (seg1.layer === seg2.layer) {
-              const minDist = segmentToSegmentMinDistance(
-                seg1.p1,
-                seg1.p2,
-                seg2.p1,
-                seg2.p2,
-              )
               // endpoints of s1 against s2
               endpointForce(seg1.p1, seg1.p1Idx, seg2, i, j)
               endpointForce(seg1.p2, seg1.p2Idx, seg2, i, j)

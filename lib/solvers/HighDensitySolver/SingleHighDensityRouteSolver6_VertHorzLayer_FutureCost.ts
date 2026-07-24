@@ -153,7 +153,6 @@ export class SingleHighDensityRouteSolver6_VertHorzLayer_FutureCost extends Sing
 
   computeH(node: Node) {
     const goalDist = distance(node, this.B) ** 1.6
-    const goalDistRatio = goalDist / this.straightLineDistance
 
     // Base cost from original function
     const baseCost =
