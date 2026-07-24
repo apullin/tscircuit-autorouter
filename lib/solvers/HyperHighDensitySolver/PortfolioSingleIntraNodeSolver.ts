@@ -535,6 +535,23 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
   }
 
   onSolve(solver: SupervisedSolver<IntraNodeRouteSolver>) {
+    // PERF_SUPERVISOR_STATS=1: record the sequential-schedule work ratio
+    // R = total candidate work / winner work for the parallelism design
+    // (perf-artifacts/parallelism-design.md). Stats-only, no behavior change.
+    if (typeof process !== "undefined" && process.env.PERF_SUPERVISOR_STATS) {
+      const g = globalThis as unknown as {
+        __supervisorStats?: Array<Record<string, unknown>>
+      }
+      g.__supervisorStats ??= []
+      g.__supervisorStats.push({
+        winnerIterations: solver.solver.iterations,
+        winnerKind: solver.solver.constructor.name,
+        totalCandidateWork: this.getTotalCandidateWork(),
+        candidates: this.supervisedSolvers?.length ?? 0,
+        supervisorIterations: this.iterations,
+        expanded: this.adaptiveSearchExpanded,
+      })
+    }
     let routes: HighDensityIntraNodeRoute[]
     if (
       (solver.solver as any) instanceof HighDensitySolverA01 ||
