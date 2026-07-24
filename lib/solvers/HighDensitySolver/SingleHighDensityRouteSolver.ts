@@ -63,7 +63,22 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
   CELL_SIZE_FACTOR: number
   NEARBY_SEGMENT_CLEARANCE: number
 
-  exploredNodes: Set<string>
+  exploredNodes: Set<number>
+
+  /**
+   * Packed numeric node-key parameters. Keys are
+   * `((ix - nodeKeyIxMin) * nodeKeyIyExtent + (iy - nodeKeyIyMin)) * nodeKeyZExtent + (z - nodeKeyZMin)`
+   * with `ix = Math.round(x / cellStep)`, `iy = Math.round(y / cellStep)` —
+   * the exact same rounding the legacy string key used. Offsets/extents are
+   * derived in the constructor from the solver bounds (plus A/B and slack) so
+   * every component is non-negative and below its extent, making the mixed
+   * radix packing collision-free within Number.MAX_SAFE_INTEGER.
+   */
+  nodeKeyIxMin: number
+  nodeKeyIyMin: number
+  nodeKeyZMin: number
+  nodeKeyIyExtent: number
+  nodeKeyZExtent: number
 
   candidates: SingleRouteCandidatePriorityQueue
 
@@ -163,6 +178,48 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
 
     this.cellStep *= this.CELL_SIZE_FACTOR
 
+    // Every keyed node x is either clamped into [minX, maxX], equal to A.x,
+    // or within cellStep/4 of A.x (the rounded start node), so
+    // Math.round(x / cellStep) lies within the rounded range below ±1; the
+    // ±2 slack covers it (same for y). Keyed z values come from
+    // availableZ ∪ {A.z ?? 0}.
+    const startZForKey = this.A.z ?? 0
+    const keyIxLo =
+      Math.round(Math.min(this.bounds.minX, this.A.x) / this.cellStep) - 2
+    const keyIxHi =
+      Math.round(Math.max(this.bounds.maxX, this.A.x) / this.cellStep) + 2
+    const keyIyLo =
+      Math.round(Math.min(this.bounds.minY, this.A.y) / this.cellStep) - 2
+    const keyIyHi =
+      Math.round(Math.max(this.bounds.maxY, this.A.y) / this.cellStep) + 2
+    const keyZLo = Math.min(0, startZForKey, this.B.z ?? 0, ...this.availableZ)
+    const keyZHi = Math.max(
+      startZForKey,
+      this.B.z ?? 0,
+      this.layerCount - 1,
+      ...this.availableZ,
+    )
+    this.nodeKeyIxMin = keyIxLo
+    this.nodeKeyIyMin = keyIyLo
+    this.nodeKeyZMin = keyZLo
+    this.nodeKeyIyExtent = keyIyHi - keyIyLo + 1
+    this.nodeKeyZExtent = keyZHi - keyZLo + 1
+    const nodeKeyCapacity =
+      (keyIxHi - keyIxLo + 1) * this.nodeKeyIyExtent * this.nodeKeyZExtent
+    if (
+      !Number.isSafeInteger(keyIxLo) ||
+      !Number.isSafeInteger(keyIxHi) ||
+      !Number.isSafeInteger(keyIyLo) ||
+      !Number.isSafeInteger(keyIyHi) ||
+      !Number.isFinite(keyZLo) ||
+      !Number.isFinite(keyZHi) ||
+      !(nodeKeyCapacity <= Number.MAX_SAFE_INTEGER)
+    ) {
+      throw new Error(
+        `SingleHighDensityRouteSolver: packed node key space does not fit in a safe integer (bounds ${JSON.stringify(this.bounds)}, cellStep ${this.cellStep}, z range [${keyZLo}, ${keyZHi}])`,
+      )
+    }
+
     const isOnSameEdge =
       (Math.abs(this.A.x - this.bounds.minX) < 0.001 &&
         Math.abs(this.B.x - this.bounds.minX) < 0.001) || // both on left
@@ -194,17 +251,18 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
         initialNodePosition.y -
         Math.round(opts.A.y / this.cellStep) * this.cellStep,
     }
-    const initialParent = {
-      ...opts.A,
+    const initialParent: Node = {
+      x: opts.A.x,
+      y: opts.A.y,
       z: opts.A.z ?? 0,
       g: 0,
       h: 0,
       f: 0,
       parent: null,
     }
-    const roundedInitialNode = {
-      ...opts.A,
-      ...initialNodePosition,
+    const roundedInitialNode: Node = {
+      x: initialNodePosition.x,
+      y: initialNodePosition.y,
       z: opts.A.z ?? 0,
       g: 0,
       h: 0,
@@ -452,8 +510,23 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
     return g + h * this.GREEDY_MULTIPLER
   }
 
+  /**
+   * String node key, kept for debug/visualization consumers
+   * (debug_exploredNodesOrdered et al). The hot path uses getPackedNodeKey,
+   * which distinguishes exactly the same (ix, iy, z) triples.
+   */
   getNodeKey(node: Node) {
     return `${Math.round(node.x / this.cellStep) * this.cellStep},${Math.round(node.y / this.cellStep) * this.cellStep},${node.z}`
+  }
+
+  getPackedNodeKey(x: number, y: number, z: number): number {
+    return (
+      ((Math.round(x / this.cellStep) - this.nodeKeyIxMin) *
+        this.nodeKeyIyExtent +
+        (Math.round(y / this.cellStep) - this.nodeKeyIyMin)) *
+        this.nodeKeyZExtent +
+      (z - this.nodeKeyZMin)
+    )
   }
 
   getNeighbors(node: Node) {
@@ -461,21 +534,26 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
 
     const { maxX, minX, maxY, minY } = this.bounds
 
-    for (let x = -1; x <= 1; x++) {
-      for (let y = -1; y <= 1; y++) {
-        if (x === 0 && y === 0) continue
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        if (dx === 0 && dy === 0) continue
 
-        const neighbor = {
-          ...node,
-          parent: node,
-          x: clamp(node.x + x * this.cellStep, minX, maxX),
-          y: clamp(node.y + y * this.cellStep, minY, maxY),
-        }
-
-        const neighborKey = this.getNodeKey(neighbor)
+        const x = clamp(node.x + dx * this.cellStep, minX, maxX)
+        const y = clamp(node.y + dy * this.cellStep, minY, maxY)
+        const neighborKey = this.getPackedNodeKey(x, y, node.z)
 
         if (this.exploredNodes.has(neighborKey)) {
           continue
+        }
+
+        const neighbor: Node = {
+          x,
+          y,
+          z: node.z,
+          g: 0,
+          h: 0,
+          f: 0,
+          parent: node,
         }
 
         if (this.isNodeTooCloseToObstacle(neighbor)) {
@@ -511,14 +589,21 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
     for (const newZ of this.availableZ) {
       if (newZ === node.z) continue
 
-      const viaNeighbor = {
-        ...node,
-        parent: node,
+      if (this.exploredNodes.has(this.getPackedNodeKey(node.x, node.y, newZ))) {
+        continue
+      }
+
+      const viaNeighbor: Node = {
+        x: node.x,
+        y: node.y,
         z: newZ,
+        g: 0,
+        h: 0,
+        f: 0,
+        parent: node,
       }
 
       if (
-        !this.exploredNodes.has(this.getNodeKey(viaNeighbor)) &&
         !this.isNodeTooCloseToObstacle(
           viaNeighbor,
           this.viaDiameter / 2 + this.obstacleMargin / 2,
@@ -602,18 +687,21 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
 
   _step() {
     let currentNode = this.candidates.dequeue()
-    let currentNodeKey = currentNode ? this.getNodeKey(currentNode) : undefined
+    // NOTE: packed keys can legitimately be 0, so null-check the node, never
+    // the key
+    let currentNodeKey = 0
 
-    while (
-      currentNode &&
-      currentNodeKey &&
-      this.exploredNodes.has(currentNodeKey)
-    ) {
+    while (currentNode) {
+      currentNodeKey = this.getPackedNodeKey(
+        currentNode.x,
+        currentNode.y,
+        currentNode.z,
+      )
+      if (!this.exploredNodes.has(currentNodeKey)) break
       currentNode = this.candidates.dequeue()
-      currentNodeKey = currentNode ? this.getNodeKey(currentNode) : undefined
     }
 
-    if (!currentNode || !currentNodeKey) {
+    if (!currentNode) {
       this.failed = true
       this.error = "Ran out of candidate nodes to explore"
       return
@@ -636,10 +724,13 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
       currentNode.z === this.B.z &&
       // Make sure the last segment doesn't intersect an obstacle
       !this.doesPathToParentIntersectObstacle({
-        ...currentNode,
-        parent: currentNode,
         x: this.B.x,
         y: this.B.y,
+        z: currentNode.z,
+        g: 0,
+        h: 0,
+        f: 0,
+        parent: currentNode,
       })
     ) {
       this.solved = true
