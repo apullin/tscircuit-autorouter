@@ -317,11 +317,21 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
     margin ??= this.obstacleMargin
 
     if (isVia && node.parent) {
-      const viasInMyRoute = this.getViasInNodePath(node.parent)
-      for (const via of viasInMyRoute) {
-        if (distance(node, via) < this.viaDiameter / 2 + margin) {
+      // Walk the parent chain inline instead of materializing the full
+      // ancestor path + via arrays (same comparisons in the same order):
+      // a via sits at pathNode whenever pathNode.z !== pathNode.parent.z
+      const viaClearance = this.viaDiameter / 2 + margin
+      let pathNode: Node = node.parent
+      let pathParent: Node | null = pathNode.parent
+      while (pathParent) {
+        if (
+          pathNode.z !== pathParent.z &&
+          distance(node, pathNode) < viaClearance
+        ) {
           return true
         }
+        pathNode = pathParent
+        pathParent = pathNode.parent
       }
     }
 
