@@ -49,6 +49,16 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
   effort: number
   adaptiveSearchExpanded = false
 
+  /**
+   * Expansion work budget derived from the initial portfolio. Candidate
+   * MAX_ITERATIONS values are fixed after construction/setup, so this is
+   * computed once instead of re-derived every supervisor step.
+   */
+  private cachedDynamicExpansionWorkBudget: number | null = null
+  /** Incrementally tracked sum of candidate iterations (Σ solver.iterations). */
+  private totalCandidateWork = 0
+  private lastCountedCandidateIterations = new Map<object, number>()
+
   private getSolvedSegmentCount(solver: unknown): number | null {
     const solvedConnectionsMap = (solver as any).solvedConnectionsMap
     if (!(solvedConnectionsMap instanceof Map)) return null
@@ -81,10 +91,21 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
   }
 
   private getTotalCandidateWork(): number {
-    return (this.supervisedSolvers ?? []).reduce(
-      (total, { solver }) => total + solver.iterations,
-      0,
-    )
+    return this.totalCandidateWork
+  }
+
+  /**
+   * Candidate iterations only advance inside super._step() (which steps a
+   * single candidate), so tracking the delta of the stepped solver keeps
+   * totalCandidateWork equal to Σ solver.iterations without a reduce per step.
+   */
+  private recordCandidateWork(solver: { iterations: number }) {
+    const previousIterations =
+      this.lastCountedCandidateIterations.get(solver) ?? 0
+    if (solver.iterations !== previousIterations) {
+      this.totalCandidateWork += solver.iterations - previousIterations
+      this.lastCountedCandidateIterations.set(solver, solver.iterations)
+    }
   }
 
   private getDynamicExpansionWorkBudget(): number {
@@ -321,14 +342,17 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
     super.initializeSolvers()
     for (const { solver } of this.supervisedSolvers ?? []) {
       this.initializeCandidateBudget(solver)
+      this.recordCandidateWork(solver)
     }
-    this.stats.dynamicExpansionWorkBudget = this.getDynamicExpansionWorkBudget()
+    this.cachedDynamicExpansionWorkBudget = this.getDynamicExpansionWorkBudget()
+    this.stats.dynamicExpansionWorkBudget = this.cachedDynamicExpansionWorkBudget
     this.refreshDynamicIterationLimit()
   }
 
   private addSupervisedCandidate(hyperParameters: Record<string, any>) {
     const solver = this.generateSolver(hyperParameters)
     this.initializeCandidateBudget(solver)
+    this.recordCandidateWork(solver)
     const g = this.computeG(solver)
     this.supervisedSolvers!.push({
       hyperParameters,
@@ -364,7 +388,9 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
   private shouldExpandPortfolio(): boolean {
     if (this.adaptiveSearchExpanded) return false
 
-    const expansionWorkBudget = this.getDynamicExpansionWorkBudget()
+    const expansionWorkBudget =
+      this.cachedDynamicExpansionWorkBudget ??
+      this.getDynamicExpansionWorkBudget()
     this.stats.dynamicExpansionWorkBudget = expansionWorkBudget
     return this.getTotalCandidateWork() >= expansionWorkBudget
   }
@@ -380,6 +406,12 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
     }
 
     super._step()
+
+    // super._step() advanced (at most) one candidate: the one it left in
+    // activeSubSolver. Fold its new iterations into totalCandidateWork.
+    if (this.activeSubSolver) {
+      this.recordCandidateWork(this.activeSubSolver)
+    }
 
     if (!this.solved && !this.failed && this.shouldExpandPortfolio()) {
       this.expandAdaptiveSearch()
