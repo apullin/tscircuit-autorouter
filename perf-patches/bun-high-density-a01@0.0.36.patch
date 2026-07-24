@@ -1,8 +1,77 @@
 diff --git a/lib/HighDensitySolverA01/HighDensitySolverA01.ts b/lib/HighDensitySolverA01/HighDensitySolverA01.ts
-index 2444150a..86068345 100644
+index 2444150a..0568dd6b 100644
 --- a/lib/HighDensitySolverA01/HighDensitySolverA01.ts
 +++ b/lib/HighDensitySolverA01/HighDensitySolverA01.ts
-@@ -260,6 +260,14 @@ export class HighDensitySolverA01 extends BaseSolver {
+@@ -37,6 +37,60 @@ interface SearchNode {
+   ripped: RippedNode | null
+ }
+ 
++/**
++ * Struct-of-arrays node pool (mirrors A03's TypedNodePool): avoids one
++ * SearchNode object allocation per generated neighbor — millions per solve.
++ * `ripped` chain heads stay in a parallel plain array (object refs).
++ */
++class TypedSearchNodePool {
++  z = new Int32Array(1024)
++  row = new Int32Array(1024)
++  col = new Int32Array(1024)
++  g = new Float64Array(1024)
++  f = new Float64Array(1024)
++  parentIdx = new Int32Array(1024)
++  ripped: Array<RippedNode | null> = []
++  length = 0
++
++  clear() {
++    this.length = 0
++    this.ripped.length = 0
++  }
++
++  push(
++    z: number,
++    row: number,
++    col: number,
++    g: number,
++    f: number,
++    parentIdx: number,
++    ripped: RippedNode | null,
++  ): number {
++    this.ensureCapacity(this.length + 1)
++    const idx = this.length++
++    this.z[idx] = z
++    this.row[idx] = row
++    this.col[idx] = col
++    this.g[idx] = g
++    this.f[idx] = f
++    this.parentIdx[idx] = parentIdx
++    this.ripped[idx] = ripped
++    return idx
++  }
++
++  private ensureCapacity(size: number) {
++    if (size <= this.z.length) return
++    let next = this.z.length
++    while (next < size) next *= 2
++    const nz = new Int32Array(next); nz.set(this.z); this.z = nz
++    const nr = new Int32Array(next); nr.set(this.row); this.row = nr
++    const nc = new Int32Array(next); nc.set(this.col); this.col = nc
++    const ng = new Float64Array(next); ng.set(this.g); this.g = ng
++    const nf = new Float64Array(next); nf.set(this.f); this.f = nf
++    const np = new Int32Array(next); np.set(this.parentIdx); this.parentIdx = np
++  }
++}
++
+ // --- Connection segment ---
+ interface ConnectionSeg {
+   connId: ConnId
+@@ -253,13 +307,21 @@ export class HighDensitySolverA01 extends BaseSolver {
+   private activeConnSeg: ConnectionSeg | null = null
+   private activeConnId: ConnId = -1
+   private crossLayerSearch = false
+-  private nodePool!: SearchNode[]
++  private nodePool = new TypedSearchNodePool()
+   private heap!: MinHeap
+   private seqCounter = 0
+ 
    // --- Reusable scratch for via occupant scan ---
    private _viaOccs: ConnId[] = []
  
@@ -17,7 +86,66 @@ index 2444150a..86068345 100644
    // --- Convergence state ---
    private ripCount!: number[]
    private totalRipEvents = 0
-@@ -620,6 +628,7 @@ export class HighDensitySolverA01 extends BaseSolver {
+@@ -504,7 +566,7 @@ export class HighDensitySolverA01 extends BaseSolver {
+     // A* state
+     this.activeConnSeg = null
+     this.activeConnId = -1
+-    this.nodePool = []
++    this.nodePool.clear()
+     this.heap = new MinHeap()
+     this.seqCounter = 0
+   }
+@@ -529,7 +591,7 @@ export class HighDensitySolverA01 extends BaseSolver {
+       this.crossLayerSearch = next.startZ !== next.endZ
+ 
+       // Reset A* state for this connection
+-      this.nodePool = []
++      this.nodePool.clear()
+       this.heap.clear()
+       this.seqCounter = 0
+       this.searchIterations = 0
+@@ -545,15 +607,7 @@ export class HighDensitySolverA01 extends BaseSolver {
+         next.endCol,
+       )
+       const f = h * this.hyperParameters.greedyMultiplier
+-      this.nodePool.push({
+-        z: next.startZ,
+-        row: next.startRow,
+-        col: next.startCol,
+-        g: 0,
+-        f,
+-        parentIdx: -1,
+-        ripped: null,
+-      })
++      this.nodePool.push(next.startZ, next.startRow, next.startCol, 0, f, -1, null)
+       this.heap.push(f, this.seqCounter++, 0)
+       return
+     }
+@@ -575,7 +629,7 @@ export class HighDensitySolverA01 extends BaseSolver {
+       this.activeConnSeg = null
+       this.activeConnId = -1
+       this.heap.clear()
+-      this.nodePool = []
++      this.nodePool.clear()
+       this.consecutiveSkips++
+       if (this.consecutiveSkips >= this.unsolvedSegs.length * 3) {
+         this.error = `Convergence failure: ${this.unsolvedSegs.length} connections stuck`
+@@ -593,8 +647,12 @@ export class HighDensitySolverA01 extends BaseSolver {
+ 
+     // 3. Pop best node (O(log n))
+     const nodeIdx = this.heap.pop()
+-    const node = this.nodePool[nodeIdx]!
+-    const { z, row, col, g, ripped } = node
++    const pool = this.nodePool
++    const z = pool.z[nodeIdx]!
++    const row = pool.row[nodeIdx]!
++    const col = pool.col[nodeIdx]!
++    const g = pool.g[nodeIdx]!
++    const ripped = pool.ripped[nodeIdx]!
+ 
+     // 4. Skip if already visited (stamp check)
+     const cellIdx = (z * this.rows + row) * this.cols + col
+@@ -620,6 +678,7 @@ export class HighDensitySolverA01 extends BaseSolver {
      const cellSizeMm = this.cellSizeMm
      const visited = this.visitedStamp
      const stamp = this.stamp
@@ -25,25 +153,50 @@ index 2444150a..86068345 100644
  
      // 6a. 8-directional lateral moves
      for (let d = 0; d < 8; d++) {
-@@ -636,7 +645,7 @@ export class HighDensitySolverA01 extends BaseSolver {
+@@ -636,18 +695,9 @@ export class HighDensitySolverA01 extends BaseSolver {
        const f2 =
          g2 +
          this.computeH(z, nr, nc, endZ, endRow, endCol) *
 -          this.hyperParameters.greedyMultiplier
+-
+-      const newNodeIdx = this.nodePool.length
+-      this.nodePool.push({
+-        z,
+-        row: nr,
+-        col: nc,
+-        g: g2,
+-        f: f2,
+-        parentIdx: nodeIdx,
+-        ripped: this._moveRipped,
+-      })
 +          greedyMultiplier
++
++      const newNodeIdx = pool.push(z, nr, nc, g2, f2, nodeIdx, this._moveRipped)
+       this.heap.push(f2, this.seqCounter++, newNodeIdx)
+     }
  
-       const newNodeIdx = this.nodePool.length
-       this.nodePool.push({
-@@ -680,7 +689,7 @@ export class HighDensitySolverA01 extends BaseSolver {
+@@ -680,18 +730,9 @@ export class HighDensitySolverA01 extends BaseSolver {
          const f2 =
            g2 +
            this.computeH(nz, row, col, endZ, endRow, endCol) *
 -            this.hyperParameters.greedyMultiplier
 +            greedyMultiplier
  
-         const newNodeIdx = this.nodePool.length
-         this.nodePool.push({
-@@ -711,19 +720,24 @@ export class HighDensitySolverA01 extends BaseSolver {
+-        const newNodeIdx = this.nodePool.length
+-        this.nodePool.push({
+-          z: nz,
+-          row,
+-          col,
+-          g: g2,
+-          f: f2,
+-          parentIdx: nodeIdx,
+-          ripped: this._moveRipped,
+-        })
++        const newNodeIdx = pool.push(nz, row, col, g2, f2, nodeIdx, this._moveRipped)
+         this.heap.push(f2, this.seqCounter++, newNodeIdx)
+       }
+     }
+@@ -711,19 +752,24 @@ export class HighDensitySolverA01 extends BaseSolver {
      let cost = 0
      let r = ripped
      const cols = this.cols
@@ -75,7 +228,7 @@ index 2444150a..86068345 100644
        const seg = this.activeConnSeg
        const isSegEnd =
          !!seg &&
-@@ -744,28 +758,27 @@ export class HighDensitySolverA01 extends BaseSolver {
+@@ -744,28 +790,27 @@ export class HighDensitySolverA01 extends BaseSolver {
        // Via footprint occupants (reusable scratch array)
        this.fillViaOccupants(toRow, toCol, activeConn)
        const occs = this._viaOccs
@@ -111,7 +264,7 @@ index 2444150a..86068345 100644
        const seg = this.activeConnSeg
        const isSegEnd =
          !!seg &&
-@@ -784,17 +797,14 @@ export class HighDensitySolverA01 extends BaseSolver {
+@@ -784,17 +829,14 @@ export class HighDensitySolverA01 extends BaseSolver {
        }
  
        const occ = this.usedCellsFlat[flatIdx]!
@@ -133,7 +286,7 @@ index 2444150a..86068345 100644
        }
  
        // Prevent unmodeled same-layer diagonal X-crossings.
-@@ -811,11 +821,8 @@ export class HighDensitySolverA01 extends BaseSolver {
+@@ -811,11 +853,8 @@ export class HighDensitySolverA01 extends BaseSolver {
          const sqCols = this.cols - 1
          const diagBase = ((toZ * (this.rows - 1) + sqRow) * sqCols + sqCol) * 2
          const crossingOcc = this.usedDiagFlat[diagBase + crossingSlot]!
@@ -147,7 +300,7 @@ index 2444150a..86068345 100644
          if (
            crossingOcc !== -1 &&
            crossingOcc !== activeConn &&
-@@ -834,6 +841,22 @@ export class HighDensitySolverA01 extends BaseSolver {
+@@ -834,6 +873,22 @@ export class HighDensitySolverA01 extends BaseSolver {
  
    // --- Via footprint unique occupants (fills _viaOccs scratch array) ---
    private fillViaOccupants(row: number, col: number, activeConn: ConnId): void {
@@ -170,7 +323,7 @@ index 2444150a..86068345 100644
      const occs = this._viaOccs
      occs.length = 0
      const rows = this.rows
-@@ -842,6 +865,11 @@ export class HighDensitySolverA01 extends BaseSolver {
+@@ -842,6 +897,11 @@ export class HighDensitySolverA01 extends BaseSolver {
      const offDc = this.viaOffsetsDc
      const offLen = this.viaOffsetsLen
      const used = this.usedCellsFlat
@@ -182,7 +335,7 @@ index 2444150a..86068345 100644
  
      for (let z = 0; z < this.layers; z++) {
        const zBase = z * this.planeSize
-@@ -851,12 +879,7 @@ export class HighDensitySolverA01 extends BaseSolver {
+@@ -851,12 +911,7 @@ export class HighDensitySolverA01 extends BaseSolver {
          if (r < 0 || c < 0 || r >= rows || c >= cols) continue
          const occ = used[zBase + r * cols + c]!
          if (occ === -1 || occ === activeConn) continue
@@ -196,7 +349,34 @@ index 2444150a..86068345 100644
            continue
          }
          // Small unique check (typically very few occupants)
-@@ -1105,6 +1128,7 @@ export class HighDensitySolverA01 extends BaseSolver {
+@@ -1058,9 +1113,12 @@ export class HighDensitySolverA01 extends BaseSolver {
+     const cells: Array<{ z: number; row: number; col: number }> = []
+     let idx = goalNodeIdx
+     while (idx >= 0) {
+-      const n = this.nodePool[idx]!
+-      cells.push({ z: n.z, row: n.row, col: n.col })
+-      idx = n.parentIdx
++      cells.push({
++        z: this.nodePool.z[idx]!,
++        row: this.nodePool.row[idx]!,
++        col: this.nodePool.col[idx]!,
++      })
++      idx = this.nodePool.parentIdx[idx]!
+     }
+     cells.reverse()
+ 
+@@ -1092,9 +1150,8 @@ export class HighDensitySolverA01 extends BaseSolver {
+     const connId = this.activeConnId
+ 
+     // Collect ripped traces from goal node's persistent list
+-    const goalNode = this.nodePool[goalNodeIdx]!
+     const rippedIds: ConnId[] = []
+-    for (let cur = goalNode.ripped; cur; cur = cur.prev) {
++    for (let cur = this.nodePool.ripped[goalNodeIdx]; cur; cur = cur.prev) {
+       rippedIds.push(cur.id)
+     }
+ 
+@@ -1105,6 +1162,7 @@ export class HighDensitySolverA01 extends BaseSolver {
      }
  
      // Mark cells as used (with margin)
@@ -204,7 +384,7 @@ index 2444150a..86068345 100644
      const marginCells = Math.ceil(this.traceMargin / this.cellSizeMm)
      const indices: number[] = []
      const rows = this.rows
-@@ -1315,6 +1339,7 @@ export class HighDensitySolverA01 extends BaseSolver {
+@@ -1315,6 +1373,7 @@ export class HighDensitySolverA01 extends BaseSolver {
      // Clear used cells using tracked indices
      const indices = this.usedIndicesByConn[connId]
      if (indices) {
