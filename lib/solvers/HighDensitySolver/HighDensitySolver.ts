@@ -320,7 +320,6 @@ export class HighDensitySolver extends BaseSolver {
    * of it.
    */
   _step() {
-    this.updateCacheStats()
     if (this.activeSubSolver) {
       this.activeSubSolver.step()
       if (this.activeSubSolver.solved) {
@@ -336,13 +335,14 @@ export class HighDensitySolver extends BaseSolver {
         )
         this.recordResizeStats(this.activeSubSolver)
         this.activeSubSolver = null
+        this.updateCacheStats()
       } else if (this.activeSubSolver.failed) {
         this.recordNodeSolveMetadata(this.activeSubSolver, "failed")
         this.recordResizeStats(this.activeSubSolver)
         this.failedSolvers.push(this.activeSubSolver)
         this.activeSubSolver = null
+        this.updateCacheStats()
       }
-      this.updateCacheStats()
       return
     }
     if (this.unsolvedNodePortPoints.length === 0) {
