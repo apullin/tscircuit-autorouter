@@ -87,7 +87,7 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
   debug_nodesTooCloseToObstacle: Set<string>
   debug_nodePathToParentIntersectsObstacle: Set<string>
 
-  debugEnabled = true
+  debugEnabled = false
 
   initialNodeGridOffset: { x: number; y: number }
 
@@ -479,7 +479,9 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
         }
 
         if (this.isNodeTooCloseToObstacle(neighbor)) {
-          this.debug_nodesTooCloseToObstacle.add(neighborKey)
+          if (this.debugEnabled) {
+            this.debug_nodesTooCloseToObstacle.add(neighborKey)
+          }
           this.exploredNodes.add(neighborKey)
           continue
         }
@@ -490,7 +492,9 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
         }
 
         if (this.doesPathToParentIntersectObstacle(neighbor)) {
-          this.debug_nodePathToParentIntersectsObstacle.add(neighborKey)
+          if (this.debugEnabled) {
+            this.debug_nodePathToParentIntersectsObstacle.add(neighborKey)
+          }
           this.exploredNodes.add(neighborKey)
           continue
         }
@@ -615,7 +619,9 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
       return
     }
     this.exploredNodes.add(currentNodeKey)
-    this.debug_exploredNodesOrdered.push(currentNodeKey)
+    if (this.debugEnabled) {
+      this.debug_exploredNodesOrdered.push(currentNodeKey)
+    }
 
     const goalDist = distance(currentNode, this.B)
 

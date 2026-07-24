@@ -47,6 +47,11 @@ export interface CapacityPathingSingleSectionPathingSolverParams {
   nodeMap?: Map<CapacityMeshNodeId, CapacityMeshNode>
   nodeEdgeMap?: Map<CapacityMeshNodeId, CapacityMeshEdge[]>
   hyperParameters?: CpssPathingSolverHyperParameters
+  /**
+   * Record per-neighbor f/g/h costs for visualization. Off by default
+   * because the bookkeeping allocates per A* expansion.
+   */
+  debugEnabled?: boolean
 }
 
 export class CapacityPathingSingleSectionSolver extends BaseSolver {
@@ -65,6 +70,11 @@ export class CapacityPathingSingleSectionSolver extends BaseSolver {
   }>
   nodeMap: Map<CapacityMeshNodeId, CapacityMeshNode> // Map of nodes *within the section*
   nodeEdgeMap: Map<CapacityMeshNodeId, CapacityMeshEdge[]> // Edges *within the section*
+  /**
+   * Precomputed neighbor nodes (within the section) for each node in nodeMap.
+   * Callers must NOT mutate the returned arrays.
+   */
+  nodeAdjacencyMap: Map<CapacityMeshNodeId, CapacityMeshNode[]>
   colorMap: Record<string, string>
   usedNodeCapacityMap: Map<CapacityMeshNodeId, number> // Tracks capacity usage *within this solver's run*
   totalNodeCapacityMap: Map<CapacityMeshNodeId, number> // Added: Stores total capacity for each node
@@ -79,6 +89,7 @@ export class CapacityPathingSingleSectionSolver extends BaseSolver {
   visitedNodes?: Set<CapacityMeshNodeId> | null = null
   queuedNodes?: Set<CapacityMeshNodeId> | null = null
   activeCandidateStraightLineDistance?: number
+  debugEnabled: boolean
   debug_lastNodeCostMap: Map<
     CapacityMeshNodeId,
     {
@@ -95,6 +106,7 @@ export class CapacityPathingSingleSectionSolver extends BaseSolver {
     super()
 
     this.MAX_ITERATIONS = 10e3
+    this.debugEnabled = params.debugEnabled ?? false
     this.centerNodeId = params.centerNodeId
     this.sectionNodes = params.sectionNodes
     this.sectionEdges = params.sectionEdges
@@ -106,6 +118,18 @@ export class CapacityPathingSingleSectionSolver extends BaseSolver {
       params.nodeMap ??
       new Map(this.sectionNodes.map((n) => [n.capacityMeshNodeId, n]))
     this.nodeEdgeMap = params.nodeEdgeMap ?? getNodeEdgeMap(this.sectionEdges) // Use only section edges
+    this.nodeAdjacencyMap = new Map()
+    for (const [nodeId] of this.nodeMap) {
+      const neighbors: CapacityMeshNode[] = []
+      for (const edge of this.nodeEdgeMap.get(nodeId) ?? []) {
+        for (const otherNodeId of edge.nodeIds) {
+          if (otherNodeId === nodeId) continue
+          const otherNode = this.nodeMap.get(otherNodeId)
+          if (otherNode) neighbors.push(otherNode)
+        }
+      }
+      this.nodeAdjacencyMap.set(nodeId, neighbors)
+    }
     this.colorMap = params.colorMap ?? {}
 
     // Initialize capacity map, potentially with starting values
@@ -237,17 +261,9 @@ export class CapacityPathingSingleSectionSolver extends BaseSolver {
 
   // Adapted from CapacityPathingSolver - uses section's nodeEdgeMap
   getNeighboringNodes(node: CapacityMeshNode): CapacityMeshNode[] {
-    if (!this.nodeMap.has(node.capacityMeshNodeId)) return [] // Node not in section
-
-    return (
-      this.nodeEdgeMap
-        .get(node.capacityMeshNodeId)
-        ?.flatMap((edge): CapacityMeshNodeId[] =>
-          edge.nodeIds.filter((n) => n !== node.capacityMeshNodeId),
-        )
-        .map((nId) => this.nodeMap.get(nId)!)
-        .filter(Boolean) ?? [] // Ensure nodes exist in the section map and filter out undefined
-    )
+    // Precomputed in the constructor (covers every node in nodeMap; nodes
+    // outside the section have no entry). Do not mutate the returned array.
+    return this.nodeAdjacencyMap.get(node.capacityMeshNodeId) ?? []
   }
 
   // Adapted from CapacityPathingSolver - uses section's nodeEdgeMap
@@ -411,11 +427,13 @@ export class CapacityPathingSingleSectionSolver extends BaseSolver {
       const h = this.computeH(currentCandidate, neighborNode, endNode)
       const f = g + h * this.GREEDY_MULTIPLIER
 
-      this.debug_lastNodeCostMap.set(neighborNode.capacityMeshNodeId, {
-        f,
-        g,
-        h,
-      })
+      if (this.debugEnabled) {
+        this.debug_lastNodeCostMap.set(neighborNode.capacityMeshNodeId, {
+          f,
+          g,
+          h,
+        })
+      }
 
       // Create and add the new candidate
       const newCandidate: Candidate = {
@@ -492,11 +510,13 @@ export class CapacityPathingSingleSectionSolver extends BaseSolver {
     const initialH = this.computeH(null!, startNode, endNode)
     this.candidates[0].h = initialH
     this.candidates[0].f = initialH * this.GREEDY_MULTIPLIER // g is 0
-    this.debug_lastNodeCostMap.set(startNode.capacityMeshNodeId, {
-      f: this.candidates[0].f,
-      g: 0,
-      h: initialH,
-    })
+    if (this.debugEnabled) {
+      this.debug_lastNodeCostMap.set(startNode.capacityMeshNodeId, {
+        f: this.candidates[0].f,
+        g: 0,
+        h: initialH,
+      })
+    }
     this.queuedNodes = new Set([startNode.capacityMeshNodeId])
   }
 

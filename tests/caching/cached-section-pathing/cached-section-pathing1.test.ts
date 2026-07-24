@@ -29,6 +29,9 @@ describe("CachedHyperCapacityPathingSingleSectionSolver Test 1", () => {
         connection_A_B: "red",
         connection_C_D: "blue",
       },
+      // The snapshot for this test renders per-node f/g/h cost labels, which
+      // are only recorded when debugEnabled is set (off by default for perf).
+      debugEnabled: true,
     }
     // Create solver with cache
     const solver = new CachedHyperCapacityPathingSingleSectionSolver({
