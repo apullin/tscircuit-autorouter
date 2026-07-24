@@ -434,6 +434,41 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
       if (segment.z !== node.z) continue
       // TODO: find out why removing doSegmentsIntersect is causing more intersections
       if (doSegmentsIntersect(node, parent, segment.A, segment.B)) {
+        if (process.env.COLLINEAR_AUDIT) {
+          const g = globalThis as any
+          g.__cAudit ??= { trues: 0, spurious: 0, dists: [] as number[] }
+          g.__cAudit.trues++
+          // independent, uncontaminated segment-segment distance
+          const d = (() => {
+            const ax = parent.x - node.x, ay = parent.y - node.y
+            const bx = segment.B.x - segment.A.x, by = segment.B.y - segment.A.y
+            const den = ax * by - ay * bx
+            if (Math.abs(den) > 1e-15) {
+              const cx = segment.A.x - node.x, cy = segment.A.y - node.y
+              const t = (cx * by - cy * bx) / den
+              const u = (cx * ay - cy * ax) / den
+              if (t >= 0 && t <= 1 && u >= 0 && u <= 1) return 0
+            }
+            const pd = (px: number, py: number, x1: number, y1: number, x2: number, y2: number) => {
+              const dx = x2 - x1, dy = y2 - y1
+              const l2 = dx * dx + dy * dy
+              let tt = l2 === 0 ? 0 : ((px - x1) * dx + (py - y1) * dy) / l2
+              tt = tt < 0 ? 0 : tt > 1 ? 1 : tt
+              const qx = x1 + tt * dx, qy = y1 + tt * dy
+              return Math.hypot(px - qx, py - qy)
+            }
+            return Math.min(
+              pd(node.x, node.y, segment.A.x, segment.A.y, segment.B.x, segment.B.y),
+              pd(parent.x, parent.y, segment.A.x, segment.A.y, segment.B.x, segment.B.y),
+              pd(segment.A.x, segment.A.y, node.x, node.y, parent.x, parent.y),
+              pd(segment.B.x, segment.B.y, node.x, node.y, parent.x, parent.y),
+            )
+          })()
+          if (d > 1e-9) {
+            g.__cAudit.spurious++
+            if (g.__cAudit.dists.length < 2000) g.__cAudit.dists.push(d)
+          }
+        }
         return true
       }
       if (

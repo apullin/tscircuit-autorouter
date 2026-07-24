@@ -104,6 +104,12 @@ const leanPortfolioMode = (): number =>
     ? Number(process.env.TS_LEAN_PORTFOLIO ?? 0) || 0
     : 0
 
+/** TS_NODE_WORK_CAP: max aggregate candidate iterations per node (0 = off). */
+const NODE_WORK_CAP =
+  typeof process !== "undefined"
+    ? Number(process.env.TS_NODE_WORK_CAP ?? 0) || 0
+    : 0
+
 /** Coordinates a fitness-scheduled portfolio of intra-node routing solvers. */
 export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolver<
   | IntraNodeRouteSolver
@@ -182,6 +188,24 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
       this.totalCandidateWork += solver.iterations - previousIterations
       this.lastCountedCandidateIterations.set(solver, solver.iterations)
     }
+  }
+
+  /**
+   * B1 stagnation cap (TS_NODE_WORK_CAP=<iterations>): abandon a node once the
+   * portfolio has burned more aggregate candidate work than any node is
+   * plausibly worth. Measured on srj18 sample 6: 87.6% of all HD candidate
+   * work goes to the 41 nodes that fail anyway (worst: 14.6M iterations),
+   * while no node that SOLVED needed more than 3.7M. Capping trades a
+   * vanishing tail of late solves for the bulk of the stagnation cost.
+   * Not result-identical when the cap bites; quality-gated on benchmarks.
+   */
+  private checkNodeWorkCap(): boolean {
+    if (NODE_WORK_CAP <= 0 || this.solved || this.failed) return false
+    if (this.totalCandidateWork <= NODE_WORK_CAP) return false
+    this.failed = true
+    this.error = `node work cap exceeded (${this.totalCandidateWork} > ${NODE_WORK_CAP})`
+    this.stats.nodeWorkCapHit = true
+    return true
   }
 
   private getDynamicExpansionWorkBudget(): number {
@@ -416,6 +440,7 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
 
   private leanMode = false
   private leanRetried = false
+  private recordedFailureStats = false
 
   override initializeSolvers() {
     const mode = leanPortfolioMode()
@@ -630,6 +655,7 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
       if (this.activeSubSolver) {
         this.recordCandidateWork(this.activeSubSolver)
       }
+      if (this.checkNodeWorkCap()) return
       if (!this.solved && !this.failed && this.shouldExpandPortfolio()) {
         this.expandAdaptiveSearch()
       }
@@ -747,11 +773,38 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
       return
     }
 
+    // PERF_SUPERVISOR_STATS: record nodes the portfolio gives up on. The
+    // onSolve hook only fires on success, so failures (the stagnation tail)
+    // were invisible.
+    if (
+      this.failed &&
+      !this.recordedFailureStats &&
+      typeof process !== "undefined" &&
+      process.env.PERF_SUPERVISOR_STATS
+    ) {
+      this.recordedFailureStats = true
+      const g = globalThis as unknown as {
+        __supervisorStats?: Array<Record<string, unknown>>
+      }
+      g.__supervisorStats ??= []
+      g.__supervisorStats.push({
+        nodeId: this.nodeWithPortPoints.capacityMeshNodeId,
+        nodeFailed: true,
+        points: this.nodeWithPortPoints.portPoints.length,
+        totalCandidateWork: this.getTotalCandidateWork(),
+        candidates: this.supervisedSolvers?.length ?? 0,
+        supervisorIterations: this.iterations,
+        expanded: this.adaptiveSearchExpanded,
+      })
+    }
+
     // super._step() advanced (at most) one candidate: the one it left in
     // activeSubSolver. Fold its new iterations into totalCandidateWork.
     if (this.activeSubSolver) {
       this.recordCandidateWork(this.activeSubSolver)
     }
+
+    if (this.checkNodeWorkCap()) return
 
     if (!this.solved && !this.failed && this.shouldExpandPortfolio()) {
       this.expandAdaptiveSearch()
