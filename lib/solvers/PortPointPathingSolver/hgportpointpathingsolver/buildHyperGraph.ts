@@ -187,14 +187,22 @@ export function buildHyperGraph(params: {
     })
   }
 
+  // Map lookup instead of a linear regions.find per segment port point
+  // (O(S×R) → O(S)). First-wins insertion mirrors Array.prototype.find in the
+  // (theoretical) duplicate-regionId case. At this point graph.regions contains
+  // exactly the capacity-mesh regions; assignable-via regions are appended
+  // after this loop.
+  const regionById = new Map<string, RegionHg>()
+  for (const region of graph.regions) {
+    if (!regionById.has(region.regionId)) {
+      regionById.set(region.regionId, region)
+    }
+  }
+
   for (const spp of params.segmentPortPoints) {
     const [region1Id, region2Id] = spp.nodeIds
-    const region1 = graph.regions.find(
-      (region) => region.regionId === region1Id,
-    )
-    const region2 = graph.regions.find(
-      (region) => region.regionId === region2Id,
-    )
+    const region1 = regionById.get(region1Id)
+    const region2 = regionById.get(region2Id)
 
     assertDefined(
       region1,

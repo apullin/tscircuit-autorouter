@@ -318,6 +318,24 @@ const buildSerializedTinyGraph = (
     }),
   )
 
+  // Map lookup instead of a linear regions.find per connection (O(C×R) →
+  // O(C)). First-wins insertion (including terminal regions appended below)
+  // mirrors Array.prototype.find on the growing regions array.
+  const serializedRegionById = new Map<
+    string,
+    SerializedHyperGraph["regions"][number]
+  >()
+  const registerSerializedRegion = (
+    region: SerializedHyperGraph["regions"][number],
+  ) => {
+    if (!serializedRegionById.has(region.regionId)) {
+      serializedRegionById.set(region.regionId, region)
+    }
+  }
+  for (const region of regions) {
+    registerSerializedRegion(region)
+  }
+
   const ports: SerializedHyperGraph["ports"] = params.graph.ports.map(
     (port) => ({
       portId: port.d.portId,
@@ -369,7 +387,7 @@ const buildSerializedTinyGraph = (
     const startTerminalPortId = `tiny-terminal:start-port:${connection.connectionId}`
     const endTerminalPortId = `tiny-terminal:end-port:${connection.connectionId}`
 
-    regions.push({
+    const startTerminalRegion = {
       regionId: startTerminalRegionId,
       pointIds: [startTerminalPortId],
       d: {
@@ -386,9 +404,11 @@ const buildSerializedTinyGraph = (
         _tinyTerminalNetId: connection.mutuallyConnectedNetworkId,
         netId: routeNetIndex,
       },
-    })
+    }
+    regions.push(startTerminalRegion)
+    registerSerializedRegion(startTerminalRegion)
 
-    regions.push({
+    const endTerminalRegion = {
       regionId: endTerminalRegionId,
       pointIds: [endTerminalPortId],
       d: {
@@ -405,7 +425,9 @@ const buildSerializedTinyGraph = (
         _tinyTerminalNetId: connection.mutuallyConnectedNetworkId,
         netId: routeNetIndex,
       },
-    })
+    }
+    regions.push(endTerminalRegion)
+    registerSerializedRegion(endTerminalRegion)
 
     ports.push({
       portId: startTerminalPortId,
@@ -441,12 +463,10 @@ const buildSerializedTinyGraph = (
       },
     })
 
-    const startRegion = regions.find(
-      (region) => region.regionId === connection.startRegion.regionId,
+    const startRegion = serializedRegionById.get(
+      connection.startRegion.regionId,
     )
-    const endRegion = regions.find(
-      (region) => region.regionId === connection.endRegion.regionId,
-    )
+    const endRegion = serializedRegionById.get(connection.endRegion.regionId)
     startRegion?.pointIds.push(startTerminalPortId)
     endRegion?.pointIds.push(endTerminalPortId)
 
@@ -808,6 +828,7 @@ export class TinyHypergraphPortPointPathingSolver extends BaseSolver {
   >
   private originalRegionIds: Set<CapacityMeshNodeId>
   private rootConnectionNameByConnectionId: Map<string, string | undefined>
+  private solvedNodeByIdForNodePf?: Map<CapacityMeshNodeId, NodeWithPortPoints>
 
   constructor(private params: HgPortPointPathingSolverParams) {
     super()
@@ -1090,9 +1111,23 @@ export class TinyHypergraphPortPointPathingSolver extends BaseSolver {
   }
 
   computeNodePf(node: InputNodeWithPortPoints): number | null {
-    const solvedNode = this.getOutput().nodesWithPortPoints.find(
-      (candidate) => candidate.capacityMeshNodeId === node.capacityMeshNodeId,
-    )
+    // The pipeline calls computeNodePf once per node. getOutput() rebuilds the
+    // full output (fresh PortPoint objects for every region), so calling it per
+    // node is O(N²). Build it once and resolve every node from a Map instead.
+    // getOutput() is pure (it only reads solved tiny-solver state) and the
+    // consumers below (getIntraNodeCrossingsUsingCircle /
+    // calculateNodeProbabilityOfFailure) never mutate the nodes, so caching is
+    // result-identical. First-wins insertion mirrors Array.prototype.find.
+    if (!this.solvedNodeByIdForNodePf) {
+      const solvedNodeById = new Map<CapacityMeshNodeId, NodeWithPortPoints>()
+      for (const solvedNode of this.getOutput().nodesWithPortPoints) {
+        if (!solvedNodeById.has(solvedNode.capacityMeshNodeId)) {
+          solvedNodeById.set(solvedNode.capacityMeshNodeId, solvedNode)
+        }
+      }
+      this.solvedNodeByIdForNodePf = solvedNodeById
+    }
+    const solvedNode = this.solvedNodeByIdForNodePf.get(node.capacityMeshNodeId)
     const originalRegion = this.originalRegionById.get(node.capacityMeshNodeId)
 
     if (!solvedNode || !originalRegion) {
