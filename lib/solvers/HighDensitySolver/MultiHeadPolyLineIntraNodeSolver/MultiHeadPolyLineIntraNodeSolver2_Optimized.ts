@@ -2,7 +2,27 @@ import { pointToSegmentClosestPoint } from "@tscircuit/math-utils"
 import { PolyLine2, MHPoint2, Candidate2 } from "./types2"
 import { MultiHeadPolyLineIntraNodeSolver } from "./MultiHeadPolyLineIntraNodeSolver"
 
+type PolyLineSegmentDesc = {
+  p1: MHPoint2
+  p2: MHPoint2
+  layer: number
+  p1Idx: number
+  p2Idx: number
+}
+
+type PolyLineViaDesc = {
+  point: MHPoint2
+  z1: number
+  z2: number
+  index: number
+}
+
 export class MultiHeadPolyLineIntraNodeSolver2 extends MultiHeadPolyLineIntraNodeSolver {
+  // Reusable scratch buffers for applyForcesToPolyLines (net force
+  // accumulators). Grown on demand, zero-filled per call.
+  private _netForceFx?: Float64Array
+  private _netForceFy?: Float64Array
+
   override getSolverName(): string {
     return "MultiHeadPolyLineIntraNodeSolver2"
   }
@@ -107,17 +127,27 @@ export class MultiHeadPolyLineIntraNodeSolver2 extends MultiHeadPolyLineIntraNod
     const BOUNDARY_FORCE_STRENGTH = 0.008 // How strongly points are pushed back into bounds
     const EPSILON = 1e-6 // To avoid division by zero
 
-    // 1. Initialize net forces structure: netForces[lineIdx][mPointIdx] = {fx, fy}
-    const netForces: Array<Array<{ fx: number; fy: number }>> = Array.from(
-      { length: numPolyLines },
-      (_, i) =>
-        Array.from({ length: polyLines[i].mPoints.length }, () => ({
-          fx: 0,
-          fy: 0,
-        })),
-    )
+    // 1. Initialize net force accumulators. Flat, reusable Float64Arrays
+    // (netForceFx/Fy[lineOffset + mPointIdx]) instead of a per-call
+    // array-of-arrays of {fx, fy} objects. Accumulation order and float math
+    // are unchanged.
+    const lineOffsets = new Array<number>(numPolyLines)
+    let totalMPoints = 0
+    for (let i = 0; i < numPolyLines; i++) {
+      lineOffsets[i] = totalMPoints
+      totalMPoints += polyLines[i].mPoints.length
+    }
+    if (!this._netForceFx || this._netForceFx.length < totalMPoints) {
+      this._netForceFx = new Float64Array(totalMPoints)
+      this._netForceFy = new Float64Array(totalMPoints)
+    } else {
+      this._netForceFx.fill(0, 0, totalMPoints)
+      this._netForceFy!.fill(0, 0, totalMPoints)
+    }
+    const netForceFx = this._netForceFx
+    const netForceFy = this._netForceFy!
 
-    // Helper to add force directly to the netForces array for a given mPoint index
+    // Helper to add force directly to the net force accumulators for a given mPoint index
     const addNetForce = (
       lineIndex: number,
       pointIndexInFullPath: number, // Index in [start, ...mPoints, end]
@@ -129,10 +159,42 @@ export class MultiHeadPolyLineIntraNodeSolver2 extends MultiHeadPolyLineIntraNod
         pointIndexInFullPath > 0 &&
         pointIndexInFullPath < polyLines[lineIndex].mPoints.length + 1
       ) {
-        const mPointIndex = pointIndexInFullPath - 1
-        netForces[lineIndex][mPointIndex].fx += fx
-        netForces[lineIndex][mPointIndex].fy += fy
+        const flatIndex = lineOffsets[lineIndex] + pointIndexInFullPath - 1
+        netForceFx[flatIndex] += fx
+        netForceFy[flatIndex] += fy
       }
+    }
+
+    // 1.5 Precompute per-line point/segment/via descriptions ONCE per call
+    // instead of rebuilding line i's arrays for every (i, j) pair (O(n·m)
+    // instead of O(n²·m) allocations). Safe because positions are only
+    // mutated in phase 3 below, after every read, and z values never change;
+    // the descriptions hold references to the live MHPoint2 objects so reads
+    // always see current values.
+    const lineSegments = new Array<PolyLineSegmentDesc[]>(numPolyLines)
+    const lineVias = new Array<PolyLineViaDesc[]>(numPolyLines)
+    for (let i = 0; i < numPolyLines; i++) {
+      const polyLine = polyLines[i]
+      const points = [polyLine.start, ...polyLine.mPoints, polyLine.end]
+      const segments: PolyLineSegmentDesc[] = []
+      const vias: PolyLineViaDesc[] = []
+      for (let k = 0; k < points.length - 1; k++) {
+        segments.push({
+          p1: points[k],
+          p2: points[k + 1],
+          layer: points[k].z2,
+          p1Idx: k,
+          p2Idx: k + 1,
+        })
+      }
+      for (let k = 0; k < points.length; k++) {
+        const p = points[k]
+        if (p.z1 !== p.z2) {
+          vias.push({ point: p, z1: p.z1, z2: p.z2, index: k })
+        }
+      }
+      lineSegments[i] = segments
+      lineVias[i] = vias
     }
 
     // 2. Calculate forces between all pairs of polylines
@@ -169,64 +231,10 @@ export class MultiHeadPolyLineIntraNodeSolver2 extends MultiHeadPolyLineIntraNod
 
     for (let i = 0; i < numPolyLines; i++) {
       for (let j = i + 1; j < numPolyLines; j++) {
-        const polyLine1 = polyLines[i]
-        const polyLine2 = polyLines[j]
-
-        const points1 = [polyLine1.start, ...polyLine1.mPoints, polyLine1.end]
-        const points2 = [polyLine2.start, ...polyLine2.mPoints, polyLine2.end]
-
-        // Extract segments and vias for easier processing
-        const segments1: Array<{
-          p1: MHPoint2
-          p2: MHPoint2
-          layer: number
-          p1Idx: number
-          p2Idx: number
-        }> = []
-        const vias1: Array<{
-          point: MHPoint2
-          layers: number[]
-          index: number
-        }> = []
-        for (let k = 0; k < points1.length - 1; k++) {
-          segments1.push({
-            p1: points1[k],
-            p2: points1[k + 1],
-            layer: points1[k].z2,
-            p1Idx: k,
-            p2Idx: k + 1,
-          })
-        }
-        points1.forEach((p, k) => {
-          if (p.z1 !== p.z2)
-            vias1.push({ point: p, layers: [p.z1, p.z2], index: k })
-        })
-
-        const segments2: Array<{
-          p1: MHPoint2
-          p2: MHPoint2
-          layer: number
-          p1Idx: number
-          p2Idx: number
-        }> = []
-        const vias2: Array<{
-          point: MHPoint2
-          layers: number[]
-          index: number
-        }> = []
-        for (let k = 0; k < points2.length - 1; k++) {
-          segments2.push({
-            p1: points2[k],
-            p2: points2[k + 1],
-            layer: points2[k].z2,
-            p1Idx: k,
-            p2Idx: k + 1,
-          })
-        }
-        points2.forEach((p, k) => {
-          if (p.z1 !== p.z2)
-            vias2.push({ point: p, layers: [p.z1, p.z2], index: k })
-        })
+        const segments1 = lineSegments[i]
+        const vias1 = lineVias[i]
+        const segments2 = lineSegments[j]
+        const vias2 = lineVias[j]
 
         // --- Interaction Calculations ---
 
@@ -247,7 +255,7 @@ export class MultiHeadPolyLineIntraNodeSolver2 extends MultiHeadPolyLineIntraNod
         // b) Via <-> Segment
         for (const via1 of vias1) {
           for (const seg2 of segments2) {
-            if (via1.layers.includes(seg2.layer)) {
+            if (via1.z1 === seg2.layer || via1.z2 === seg2.layer) {
               const closestPointOnSeg = pointToSegmentClosestPoint(
                 via1.point,
                 seg2.p1,
@@ -296,7 +304,7 @@ export class MultiHeadPolyLineIntraNodeSolver2 extends MultiHeadPolyLineIntraNod
         }
         for (const via2 of vias2) {
           for (const seg1 of segments1) {
-            if (via2.layers.includes(seg1.layer)) {
+            if (via2.z1 === seg1.layer || via2.z2 === seg1.layer) {
               const closestPointOnSeg = pointToSegmentClosestPoint(
                 via2.point,
                 seg1.p1,
@@ -347,10 +355,15 @@ export class MultiHeadPolyLineIntraNodeSolver2 extends MultiHeadPolyLineIntraNod
         // c) Via <-> Via
         for (const via1 of vias1) {
           for (const via2 of vias2) {
-            const commonLayers = via1.layers.filter((z) =>
-              via2.layers.includes(z),
-            )
-            if (commonLayers.length > 0) {
+            // Direct z comparisons instead of layers.filter/includes — a via
+            // spans exactly [z1, z2], so "any common layer" is four equality
+            // checks with no per-pair array allocation.
+            const hasCommonLayer =
+              via1.z1 === via2.z1 ||
+              via1.z1 === via2.z2 ||
+              via1.z2 === via2.z1 ||
+              via1.z2 === via2.z2
+            if (hasCommonLayer) {
               const dx = via1.point.x - via2.point.x
               const dy = via1.point.y - via2.point.y
               const dSq = dx * dx + dy * dy
@@ -392,14 +405,7 @@ export class MultiHeadPolyLineIntraNodeSolver2 extends MultiHeadPolyLineIntraNod
 
     // 2.5 Calculate forces between vias WITHIN the SAME polyline
     for (let i = 0; i < numPolyLines; i++) {
-      const polyLine = polyLines[i]
-      const points = [polyLine.start, ...polyLine.mPoints, polyLine.end]
-      const vias: Array<{ point: MHPoint2; layers: number[]; index: number }> =
-        []
-      points.forEach((p, k) => {
-        if (p.z1 !== p.z2)
-          vias.push({ point: p, layers: [p.z1, p.z2], index: k })
-      })
+      const vias = lineVias[i]
 
       if (vias.length < 2) continue // Need at least two vias to interact
 
@@ -449,13 +455,13 @@ export class MultiHeadPolyLineIntraNodeSolver2 extends MultiHeadPolyLineIntraNod
     for (let i = 0; i < numPolyLines; i++) {
       for (let k = 0; k < polyLines[i].mPoints.length; k++) {
         const mPoint = polyLines[i].mPoints[k]
-        const netForce = netForces[i][k] // Get the pre-calculated net force
+        const flatIndex = lineOffsets[i] + k
 
         // No need to sum contributions here anymore
 
         const isVia = mPoint.z1 !== mPoint.z2
-        let currentForceX = netForce.fx // Start with the repulsive/attractive force
-        let currentForceY = netForce.fy
+        let currentForceX = netForceFx[flatIndex] // Start with the repulsive/attractive force
+        let currentForceY = netForceFy[flatIndex]
         let newX = mPoint.x + currentForceX
         let newY = mPoint.y + currentForceY
 
