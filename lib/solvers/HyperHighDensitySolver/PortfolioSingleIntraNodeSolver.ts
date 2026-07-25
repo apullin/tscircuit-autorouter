@@ -104,6 +104,35 @@ const leanPortfolioMode = (): number =>
     ? Number(process.env.TS_LEAN_PORTFOLIO ?? 0) || 0
     : 0
 
+/**
+ * TS_MAX_EXHAUSTIONS: give up on a node once this many candidates have failed
+ * by EXHAUSTING THEIR SEARCH (proving no path exists under their cost model),
+ * rather than by running out of iteration budget. 0 = off.
+ *
+ * Measured on srj18 sample 8 (1210 solved + 12 failed nodes): winners arrive
+ * within 3 exhaustions on 81.0% of solved nodes, within 10 on 93.4%, within 30
+ * on 97.4%, worst case 70. Doomed nodes exhaust 67-75 candidates and consume
+ * 68-88% of ALL high-density search. Stopping at K trades the tail of late
+ * winners for most of that wasted work.
+ */
+const MAX_EXHAUSTIONS =
+  typeof process !== "undefined"
+    ? Number(process.env.TS_MAX_EXHAUSTIONS ?? 0) || 0
+    : 0
+
+/**
+ * TS_ABANDON_MAX_PROGRESS: only abandon on exhaustion when NO candidate has
+ * ever routed more than this fraction of the node's segments. A pure
+ * exhaustion count cannot discriminate - winners legitimately arrive as late
+ * as candidate #70 - but a node where nothing has ever routed is a different
+ * animal from one where a candidate got most of the way. Default 0.999 keeps
+ * the count-only behaviour; lower it to require genuine hopelessness.
+ */
+const ABANDON_MAX_PROGRESS =
+  typeof process !== "undefined"
+    ? Number(process.env.TS_ABANDON_MAX_PROGRESS ?? 0.999)
+    : 0.999
+
 /** TS_NODE_WORK_CAP: max aggregate candidate iterations per node (0 = off). */
 const NODE_WORK_CAP =
   typeof process !== "undefined"
@@ -424,6 +453,45 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
     this.stats.dynamicSupervisorIterationLimit = this.MAX_ITERATIONS
   }
 
+  private searchExhaustedCount = 0
+  private countedFailedCandidates = new Set<object>()
+
+  /**
+   * Cheap O(1) hook: super._step() advances exactly one candidate, so only that
+   * candidate can have just failed. Distinguishes search exhaustion from budget
+   * exhaustion and abandons the node once too many candidates have proved the
+   * geometry unroutable.
+   */
+  private noteCandidateOutcome(): boolean {
+    if (MAX_EXHAUSTIONS <= 0) return false
+    const active = this.activeSubSolver as any
+    if (!active?.failed || this.countedFailedCandidates.has(active)) return false
+    this.countedFailedCandidates.add(active)
+    const cap = active.MAX_ITERATIONS ?? 0
+    const iterations = active.iterations ?? 0
+    const budgetExhausted = cap > 0 && iterations >= cap
+    if (budgetExhausted) return false
+    this.searchExhaustedCount++
+    if (this.searchExhaustedCount < MAX_EXHAUSTIONS || this.solved) return false
+    // Hopelessness guard: if any candidate ever routed a decent share of the
+    // node, later candidates plausibly finish the job - keep going.
+    let bestProgress = 0
+    for (const { solver } of this.supervisedSolvers ?? []) {
+      const p = this.getCandidateProgress(solver as any)
+      if (p > bestProgress) bestProgress = p
+    }
+    this.stats.abandonBestProgress = bestProgress
+    if (bestProgress > ABANDON_MAX_PROGRESS) {
+      // reset the counter so the check re-arms rather than firing every step
+      this.searchExhaustedCount = Math.floor(MAX_EXHAUSTIONS / 2)
+      return false
+    }
+    this.failed = true
+    this.error = `abandoned after ${this.searchExhaustedCount} candidates exhausted their search`
+    this.stats.abandonedOnExhaustion = true
+    return true
+  }
+
   private leanMode = false
   private leanRetried = false
   private recordedFailureStats = false
@@ -641,6 +709,7 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
       if (this.activeSubSolver) {
         this.recordCandidateWork(this.activeSubSolver)
       }
+      if (this.noteCandidateOutcome()) return
       if (this.checkNodeWorkCap()) return
       if (!this.solved && !this.failed && this.shouldExpandPortfolio()) {
         this.expandAdaptiveSearch()
@@ -820,6 +889,7 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
       this.recordCandidateWork(this.activeSubSolver)
     }
 
+    if (this.noteCandidateOutcome()) return
     if (this.checkNodeWorkCap()) return
 
     if (!this.solved && !this.failed && this.shouldExpandPortfolio()) {
