@@ -1,0 +1,316 @@
+{
+  "version": 1,
+  "datasetName": "srj18",
+  "scenarioCount": 5,
+  "effortLabel": "1x effort",
+  "summary": [
+    {
+      "solverName": "AutoroutingPipelineSolver7_MultiGraph",
+      "completedRateLabel": "80.0% (🕒20.0%)",
+      "relaxedDrcRateLabel": "40.0% (🕒20.0%)",
+      "timedOutLabel": "1/5",
+      "p50TimeMs": 121350.06919449999,
+      "p95TimeMs": 213485.7005738,
+      "avgVia": 235
+    }
+  ],
+  "solverFailureSummary": [],
+  "timeoutSummary": [
+    {
+      "failureKind": "timeout at last observed phase",
+      "failureKey": "exactGeometryDrcForceImproveSolver / GlobalDrcBranchPortfolioSolver",
+      "affectedSamples": 1,
+      "occurrences": 1,
+      "sampleNumbers": [
+        6
+      ]
+    }
+  ],
+  "failureSummary": [
+    {
+      "failureKind": "relaxed DRC",
+      "failureKey": "pcb_trace_error",
+      "affectedSamples": 2,
+      "occurrences": 26,
+      "sampleNumbers": [
+        8,
+        12
+      ]
+    },
+    {
+      "failureKind": "relaxed DRC",
+      "failureKey": "pcb_via_clearance_error",
+      "affectedSamples": 2,
+      "occurrences": 8,
+      "sampleNumbers": [
+        8,
+        12
+      ]
+    },
+    {
+      "failureKind": "relaxed DRC",
+      "failureKey": "pcb_pad_trace_clearance_error",
+      "affectedSamples": 2,
+      "occurrences": 5,
+      "sampleNumbers": [
+        8,
+        12
+      ]
+    },
+    {
+      "failureKind": "relaxed DRC",
+      "failureKey": "trace_smtpad_accidental_contact",
+      "affectedSamples": 2,
+      "occurrences": 4,
+      "sampleNumbers": [
+        8,
+        12
+      ]
+    },
+    {
+      "failureKind": "relaxed DRC",
+      "failureKey": "pcb_via_trace_clearance_error",
+      "affectedSamples": 1,
+      "occurrences": 11,
+      "sampleNumbers": [
+        8
+      ]
+    },
+    {
+      "failureKind": "relaxed DRC",
+      "failureKey": "trace_via_overlap",
+      "affectedSamples": 1,
+      "occurrences": 2,
+      "sampleNumbers": [
+        8
+      ]
+    },
+    {
+      "failureKind": "timeout at last observed phase",
+      "failureKey": "exactGeometryDrcForceImproveSolver / GlobalDrcBranchPortfolioSolver",
+      "affectedSamples": 1,
+      "occurrences": 1,
+      "sampleNumbers": [
+        6
+      ]
+    }
+  ],
+  "snapshots": [
+    {
+      "datasetName": "srj18",
+      "solverName": "AutoroutingPipelineSolver7_MultiGraph",
+      "scenarioName": "sample005",
+      "sampleNumber": 5,
+      "label": "srj18 sample 5 - AutoroutingPipelineSolver7_MultiGraph",
+      "elapsedTimeMs": 23842.02586,
+      "traceCount": 172,
+      "viaCount": 151,
+      "relaxedDrcPassed": true,
+      "drcErrorCount": 0
+    },
+    {
+      "datasetName": "srj18",
+      "solverName": "AutoroutingPipelineSolver7_MultiGraph",
+      "scenarioName": "sample008",
+      "sampleNumber": 8,
+      "label": "srj18 sample 8 - AutoroutingPipelineSolver7_MultiGraph",
+      "elapsedTimeMs": 159092.23706699998,
+      "traceCount": 361,
+      "viaCount": 290,
+      "relaxedDrcPassed": false,
+      "drcErrorCount": 45
+    },
+    {
+      "datasetName": "srj18",
+      "solverName": "AutoroutingPipelineSolver7_MultiGraph",
+      "scenarioName": "sample010",
+      "sampleNumber": 10,
+      "label": "srj18 sample 10 - AutoroutingPipelineSolver7_MultiGraph",
+      "elapsedTimeMs": 83607.90132199999,
+      "traceCount": 310,
+      "viaCount": 176,
+      "relaxedDrcPassed": true,
+      "drcErrorCount": 0
+    },
+    {
+      "datasetName": "srj18",
+      "solverName": "AutoroutingPipelineSolver7_MultiGraph",
+      "scenarioName": "sample012",
+      "sampleNumber": 12,
+      "label": "srj18 sample 12 - AutoroutingPipelineSolver7_MultiGraph",
+      "elapsedTimeMs": 223084.547075,
+      "traceCount": 504,
+      "viaCount": 323,
+      "relaxedDrcPassed": false,
+      "drcErrorCount": 11
+    }
+  ],
+  "tests": [
+    {
+      "solverName": "AutoroutingPipelineSolver7_MultiGraph",
+      "scenarioName": "sample005",
+      "sampleNumber": 5,
+      "elapsedTimeMs": 23842.02586,
+      "didSolve": true,
+      "didTimeout": false,
+      "relaxedDrcPassed": true,
+      "viaCount": 151,
+      "benchmarkSnapshot": {
+        "datasetName": "srj18",
+        "solverName": "AutoroutingPipelineSolver7_MultiGraph",
+        "scenarioName": "sample005",
+        "sampleNumber": 5,
+        "label": "srj18 sample 5 - AutoroutingPipelineSolver7_MultiGraph",
+        "elapsedTimeMs": 23842.02586,
+        "traceCount": 172,
+        "viaCount": 151,
+        "relaxedDrcPassed": true,
+        "drcErrorCount": 0
+      },
+      "drcErrorCount": 0,
+      "drcErrorTypes": {},
+      "drcErrorMessages": []
+    },
+    {
+      "solverName": "AutoroutingPipelineSolver7_MultiGraph",
+      "scenarioName": "sample008",
+      "sampleNumber": 8,
+      "elapsedTimeMs": 159092.23706699998,
+      "didSolve": true,
+      "didTimeout": false,
+      "relaxedDrcPassed": false,
+      "viaCount": 290,
+      "benchmarkSnapshot": {
+        "datasetName": "srj18",
+        "solverName": "AutoroutingPipelineSolver7_MultiGraph",
+        "scenarioName": "sample008",
+        "sampleNumber": 8,
+        "label": "srj18 sample 8 - AutoroutingPipelineSolver7_MultiGraph",
+        "elapsedTimeMs": 159092.23706699998,
+        "traceCount": 361,
+        "viaCount": 290,
+        "relaxedDrcPassed": false,
+        "drcErrorCount": 45
+      },
+      "drcErrorCount": 45,
+      "drcErrorTypes": {
+        "pcb_trace_error": 22,
+        "trace_via_overlap": 2,
+        "trace_smtpad_accidental_contact": 2,
+        "pcb_via_trace_clearance_error": 11,
+        "pcb_pad_trace_clearance_error": 3,
+        "pcb_via_clearance_error": 5
+      },
+      "drcErrorMessages": [
+        {
+          "message": "PCB trace trace[port[pcb_port_188], port[pcb_port_298]] is too close to trace[port[pcb_port_268], port[pcb_port_180]] (gap: 0.038mm)",
+          "count": 1
+        },
+        {
+          "message": "PCB trace trace[port[pcb_port_376], port[pcb_port_380]] overlaps with trace[port[pcb_port_379], port[pcb_port_162]] (accidental contact)",
+          "count": 1
+        },
+        {
+          "message": "PCB trace trace[port[pcb_port_378], port[pcb_port_376]] is too close to trace[port[pcb_port_234], port[pcb_port_377]] (gap: 0.056mm)",
+          "count": 1
+        },
+        {
+          "message": "PCB trace trace[port[pcb_port_209], port[pcb_port_197]] is too close to trace[port[pcb_port_157], port[pcb_port_210]] (gap: 0.056mm)",
+          "count": 1
+        },
+        {
+          "message": "PCB trace trace[port[pcb_port_209], port[pcb_port_197]] overlaps with pcb_via \"pcb_via[#via_181]\" (accidental contact)",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "solverName": "AutoroutingPipelineSolver7_MultiGraph",
+      "scenarioName": "sample010",
+      "sampleNumber": 10,
+      "elapsedTimeMs": 83607.90132199999,
+      "didSolve": true,
+      "didTimeout": false,
+      "relaxedDrcPassed": true,
+      "viaCount": 176,
+      "benchmarkSnapshot": {
+        "datasetName": "srj18",
+        "solverName": "AutoroutingPipelineSolver7_MultiGraph",
+        "scenarioName": "sample010",
+        "sampleNumber": 10,
+        "label": "srj18 sample 10 - AutoroutingPipelineSolver7_MultiGraph",
+        "elapsedTimeMs": 83607.90132199999,
+        "traceCount": 310,
+        "viaCount": 176,
+        "relaxedDrcPassed": true,
+        "drcErrorCount": 0
+      },
+      "drcErrorCount": 0,
+      "drcErrorTypes": {},
+      "drcErrorMessages": []
+    },
+    {
+      "solverName": "AutoroutingPipelineSolver7_MultiGraph",
+      "scenarioName": "sample006",
+      "sampleNumber": 6,
+      "elapsedTimeMs": 360000,
+      "didSolve": false,
+      "didTimeout": true,
+      "relaxedDrcPassed": false,
+      "errorPhaseName": "exactGeometryDrcForceImproveSolver",
+      "errorSolverName": "GlobalDrcBranchPortfolioSolver",
+      "error": "Timed out after 360.0s\nLast progress: phase=exactGeometryDrcForceImproveSolver, solver=GlobalDrcBranchPortfolioSolver, pipelineIterations=2981674, phaseIterations=32, pipelineProgress=0%, phaseProgress=0%"
+    },
+    {
+      "solverName": "AutoroutingPipelineSolver7_MultiGraph",
+      "scenarioName": "sample012",
+      "sampleNumber": 12,
+      "elapsedTimeMs": 223084.547075,
+      "didSolve": true,
+      "didTimeout": false,
+      "relaxedDrcPassed": false,
+      "viaCount": 323,
+      "benchmarkSnapshot": {
+        "datasetName": "srj18",
+        "solverName": "AutoroutingPipelineSolver7_MultiGraph",
+        "scenarioName": "sample012",
+        "sampleNumber": 12,
+        "label": "srj18 sample 12 - AutoroutingPipelineSolver7_MultiGraph",
+        "elapsedTimeMs": 223084.547075,
+        "traceCount": 504,
+        "viaCount": 323,
+        "relaxedDrcPassed": false,
+        "drcErrorCount": 11
+      },
+      "drcErrorCount": 11,
+      "drcErrorTypes": {
+        "trace_smtpad_accidental_contact": 2,
+        "pcb_trace_error": 4,
+        "pcb_pad_trace_clearance_error": 2,
+        "pcb_via_clearance_error": 3
+      },
+      "drcErrorMessages": [
+        {
+          "message": "PCB trace trace[port[pcb_port_494], port[pcb_port_527]] overlaps with pcb_smtpad \"pcb_port[#pcb_port_526]\" (accidental contact)",
+          "count": 1
+        },
+        {
+          "message": "PCB trace trace[port[pcb_port_505], port[pcb_port_415]] overlaps with trace[port[pcb_port_502], port[pcb_port_509]] (accidental contact)",
+          "count": 1
+        },
+        {
+          "message": "PCB trace trace[port[pcb_port_358], port[pcb_port_700]] overlaps with trace[port[pcb_port_367], port[pcb_port_357]] (accidental contact)",
+          "count": 1
+        },
+        {
+          "message": "PCB trace trace[port[pcb_port_301], port[pcb_port_103]] overlaps with pcb_smtpad \"pcb_port[#pcb_port_102]\" (accidental contact)",
+          "count": 1
+        },
+        {
+          "message": "PCB trace trace[port[pcb_port_122], port[pcb_port_279]] overlaps with trace[port[pcb_port_414], port[pcb_port_407]] (accidental contact)",
+          "count": 1
+        }
+      ]
+    }
+  ]
+}
