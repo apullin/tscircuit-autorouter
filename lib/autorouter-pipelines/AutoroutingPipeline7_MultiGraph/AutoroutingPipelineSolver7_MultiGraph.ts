@@ -549,6 +549,13 @@ export class AutoroutingPipelineSolver7_MultiGraph extends BaseSolver {
           useGrowShrinkHighDensityIntraNodeSolver: true,
           preserveTerminalPcbPortIds: true,
           growShrinkFallbackToInvalidGeometryOnFailure: true,
+          // EXPERIMENT: cap the inner portfolio budget per growth attempt.
+          // Left undefined upstream, so a node that only routes at 2x scale
+          // first burns its ENTIRE 1x budget - measured at 68-88% of all
+          // high-density search on srj18 samples 8 and 6. Growing sooner
+          // should skip that, since the wrapper solves the node at 2x anyway.
+          growShrinkMaxInnerIterationsPerGrowthAttempt:
+            Number(process.env.TS_MAX_INNER_ITERS ?? 0) || undefined,
         },
       ]
     }),

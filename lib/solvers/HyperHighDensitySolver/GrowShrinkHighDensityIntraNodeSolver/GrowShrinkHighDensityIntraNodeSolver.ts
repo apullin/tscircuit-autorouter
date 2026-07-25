@@ -5,6 +5,12 @@ import type {
   PortPoint,
 } from "lib/types/high-density-types"
 import { BaseSolver } from "../../BaseSolver"
+
+/** TS_SALVAGE_PARTIAL=1: route k-1 connections instead of surrendering a node. */
+const SALVAGE_PARTIAL =
+  typeof process !== "undefined" &&
+  !!process.env.TS_SALVAGE_PARTIAL &&
+  process.env.TS_SALVAGE_PARTIAL !== "0"
 import { PortfolioSingleIntraNodeSolver } from "../PortfolioSingleIntraNodeSolver"
 import {
   createInvalidDirectConnectionRoutes,
@@ -139,6 +145,51 @@ export class GrowShrinkHighDensityIntraNodeSolver extends BaseSolver {
     return this.constructorParams
   }
 
+  /**
+   * Salvage a node that cannot be fully routed.
+   *
+   * The invalid-geometry fallback below emits straight-line routes for EVERY
+   * connection in the node, and those become DRC errors downstream. But
+   * experiments/drop-one.ts shows these nodes are over-committed rather than
+   * unroutable: on srj18 sample 8, 40/40 captured failing-node instances became
+   * routable when a single connection was removed (77% of individual removals
+   * worked). So route k-1 connections properly and give only the dropped one
+   * the invalid fallback, instead of surrendering all of them.
+   */
+  private tryPartialSalvage(): {
+    routes: HighDensityIntraNodeRoute[]
+    dropped: string
+  } | null {
+    const node = this.nodeWithPortPoints
+    const connectionNames: string[] = []
+    for (const portPoint of node.portPoints) {
+      if (!connectionNames.includes(portPoint.connectionName)) {
+        connectionNames.push(portPoint.connectionName)
+      }
+    }
+    if (connectionNames.length < 2) return null
+
+    const stepBudget = Number(process.env.TS_SALVAGE_STEPS ?? 200_000)
+    for (const dropped of connectionNames) {
+      const solver = new PortfolioSingleIntraNodeSolver({
+        ...this.constructorParams,
+        nodeWithPortPoints: {
+          ...node,
+          portPoints: node.portPoints.filter(
+            (p) => p.connectionName !== dropped,
+          ),
+        },
+      })
+      let steps = 0
+      while (!solver.solved && !solver.failed && steps < stepBudget) {
+        solver.step()
+        steps++
+      }
+      if (solver.solved) return { routes: solver.solvedRoutes, dropped }
+    }
+    return null
+  }
+
   private createActiveSubSolver() {
     this.activeSubSolver = new PortfolioSingleIntraNodeSolver({
       ...this.constructorParams,
@@ -148,6 +199,10 @@ export class GrowShrinkHighDensityIntraNodeSolver extends BaseSolver {
       ),
     })
     if (this.constructorParams.maxInnerIterationsPerGrowthAttempt) {
+      // Must be an external ceiling: the portfolio recomputes MAX_ITERATIONS
+      // dynamically and would otherwise overwrite this immediately.
+      this.activeSubSolver.externalMaxIterations =
+        this.constructorParams.maxInnerIterationsPerGrowthAttempt
       this.activeSubSolver.MAX_ITERATIONS =
         this.constructorParams.maxInnerIterationsPerGrowthAttempt
     }
@@ -200,20 +255,61 @@ export class GrowShrinkHighDensityIntraNodeSolver extends BaseSolver {
 
     if (this.growthAttempts >= this.maxGrowthAttempts) {
       if (this.constructorParams.fallbackToInvalidGeometryOnFailure) {
-        this.solvedRoutes = createInvalidDirectConnectionRoutes(
-          this.nodeWithPortPoints,
-          this.constructorParams.traceWidth ?? 0.15,
-          this.constructorParams.viaDiameter ?? 0.3,
-        )
+        const traceWidth = this.constructorParams.traceWidth ?? 0.15
+        const viaDiameter = this.constructorParams.viaDiameter ?? 0.3
+        if (process.env.TS_SALVAGE_TRACE) {
+          const g = globalThis as any
+          g.__salvage ??= { fallbackHits: 0, salvaged: 0, failedSalvage: 0 }
+          g.__salvage.fallbackHits++
+        }
+        const salvage = SALVAGE_PARTIAL ? this.tryPartialSalvage() : null
+        if (process.env.TS_SALVAGE_TRACE) {
+          const g = globalThis as any
+          if (salvage) g.__salvage.salvaged++
+          else g.__salvage.failedSalvage++
+        }
+        if (salvage) {
+          // Every connection still gets a route (the stitcher requires it),
+          // but only the dropped one is invalid geometry.
+          const droppedNode = {
+            ...this.nodeWithPortPoints,
+            portPoints: this.nodeWithPortPoints.portPoints.filter(
+              (p) => p.connectionName === salvage.dropped,
+            ),
+          }
+          this.solvedRoutes = [
+            ...salvage.routes,
+            ...createInvalidDirectConnectionRoutes(
+              droppedNode,
+              traceWidth,
+              viaDiameter,
+            ),
+          ]
+          this.stats = {
+            ...this.stats,
+            invalidGeometryFallback: true,
+            partialSalvage: true,
+            salvagedConnections: salvage.routes.length,
+            droppedConnection: salvage.dropped,
+            reason: "growth attempts exhausted (partially salvaged)",
+            lastError: this.error,
+          }
+        } else {
+          this.solvedRoutes = createInvalidDirectConnectionRoutes(
+            this.nodeWithPortPoints,
+            traceWidth,
+            viaDiameter,
+          )
+          this.stats = {
+            ...this.stats,
+            invalidGeometryFallback: true,
+            reason: "growth attempts exhausted",
+            lastError: this.error,
+          }
+        }
         this.solved = true
         this.failed = false
         this.progress = 1
-        this.stats = {
-          ...this.stats,
-          invalidGeometryFallback: true,
-          reason: "growth attempts exhausted",
-          lastError: this.error,
-        }
         this.error = null
         return
       }
