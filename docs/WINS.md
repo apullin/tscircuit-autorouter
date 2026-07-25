@@ -5,6 +5,22 @@ perf-audit-2026-07-23.md. Baselines: main @ v0.0.714 (b7b243cc), 64-thread x86, 
 
 ## Confirmed
 
+- **2026-07-25 — REJECTED: exhaustion-based node abandonment. Fast on most boards, catastrophic
+  on one.** Commit 2c4a73da, `TS_MAX_EXHAUSTIONS`, shipped OFF.
+  Targets the nodes consuming 68-88% of HD search that fail anyway. Single boards looked like a
+  free win — sample 8 125s/45 DRC -> 90s/41 at K=30; sample 6 268s/99 -> 213s/94 — faster AND
+  cleaner, because the freed budget goes to repair.
+  **The corpus gate killed it**: srj18 1708.4s -> 1379.7s (1.238x) but DRC 581 -> 801, with +218
+  of that from sample 2 alone (7 -> 225). dataset01 unaffected (easy boards never reach 30
+  exhaustions). Sample 2 needs K=70 to stay safe; sample 8 wants K=10-30. No global K works.
+  A hopelessness guard (`TS_ABANDON_MAX_PROGRESS`, abandon only if no candidate ever routed more
+  than P of the node) protects sample 2 but erases the speed: the doomed nodes DO reach >25%
+  progress — they route most connections then cannot place the last one or two.
+  **Conclusion: a doomed node is not locally distinguishable from a hard one** — not by geometry
+  (4 bounds tested), not by exhaustion count, not by progress. The information isn't at the node.
+  Lesson for future work: always gate on the full corpus. Two boards showed a 1.4x win with better
+  DRC; the third showed a 32x DRC regression.
+
 - **2026-07-25 — HD A* obstacle queries: drop the R-tree for small sets. +4.7% sample 8,
   +5.3% sample 6, BIT-IDENTICAL.** Commit 54dab7b0 on perf/ts-round3.
   After the math-utils fix, `flatbush.search` was the single biggest function on sample 6
