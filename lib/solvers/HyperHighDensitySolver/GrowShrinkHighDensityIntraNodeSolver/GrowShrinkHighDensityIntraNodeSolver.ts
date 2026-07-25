@@ -8,6 +8,27 @@ import { BaseSolver } from "../../BaseSolver"
 
 /** TS_SALVAGE_PARTIAL=1: route k-1 connections instead of surrendering a node. */
 /** TS_SALVAGE_BEFORE_GROW=1: prefer k-1 legal routes over a scaled (illegal) solve. */
+/**
+ * Growth schedule (absolute scale factors, applied in order).
+ *
+ * Growth relaxes clearance by exactly the scale factor: the inner solver keeps
+ * centres >= traceWidth + obstacleMargin (0.30mm) apart at scale s, and
+ * scaleRoute() shrinks that to 0.30/s while trace width stays 0.15mm, giving a
+ * gap of 0.30/s - 0.15. DRC's 0.1mm minimum therefore holds only for s <= 1.2.
+ *
+ * The upstream schedule is 2, 4, 8 - every rung illegal by construction.
+ * Replacing it with 1.2 alone is worse overall (srj18 sample 8 45 -> 29 DRC,
+ * but sample 6 99 -> 289) because nodes needing more scale exhaust their
+ * attempts and drop to the invalid-geometry fallback, which surrenders EVERY
+ * connection in the node.
+ *
+ * So lead with the legal rung and keep the relaxed ones as backstop.
+ */
+const GROWTH_SCHEDULE = (process.env.TS_GROWTH_SCHEDULE ?? "1.2,2,4,8")
+  .split(",")
+  .map(Number)
+  .filter((n) => Number.isFinite(n) && n > 1)
+
 const SALVAGE_BEFORE_GROW =
   typeof process !== "undefined" &&
   !!process.env.TS_SALVAGE_BEFORE_GROW &&
@@ -373,8 +394,11 @@ export class GrowShrinkHighDensityIntraNodeSolver extends BaseSolver {
       }
     }
 
+    // Advance along the schedule (legal rung first, relaxed rungs after).
+    this.scaleFactor =
+      GROWTH_SCHEDULE[this.growthAttempts] ??
+      this.scaleFactor * 2
     this.growthAttempts++
-    this.scaleFactor *= 2
   }
 
   visualize(): GraphicsObject {
