@@ -5,7 +5,43 @@ perf-audit-2026-07-23.md. Baselines: main @ v0.0.714 (b7b243cc), 64-thread x86, 
 
 ## Confirmed
 
-- **2026-07-25 — Peak memory: 1.2x-2.9x lower than main, biggest on the heaviest board.**
+- **2026-07-25 — HD A* obstacle queries: drop the R-tree for small sets. +4.7% sample 8,
+  +5.3% sample 6, BIT-IDENTICAL.** Commit 54dab7b0 on perf/ts-round3.
+  After the math-utils fix, `flatbush.search` was the single biggest function on sample 6
+  (23.2s, 8.2% of wall), and 96% of it came from two call sites: `isNodeTooCloseToObstacle`
+  (69.7%) and `doesPathToParentIntersectObstacle` (26.3%) — up to ~20 tree descents per A*
+  expansion, two array allocations each, plus one R-tree construction per solver.
+  Measured set sizes (sample 5, 2104 indexes): ~90% hold <=32 segments, 82% hold <=2 vias.
+  A Flatbush over 2 items is pure overhead. Now bboxes live in Float64Arrays and small sets
+  are scanned linearly using the *same* bbox test the index applies, so candidate sets and
+  decisions are identical; the tree is still built above TS_LINEAR_SCAN_MAX (default 64).
+  Interleaved A/B: sample 8 107.6s -> 102.8s (hash 4f723847 in all 4 runs); sample 6
+  259.1s -> 246.1s (hash b11cd11b in all 4 runs).
+  Threshold sweep on sample 8 was monotonic toward always-linear (102.8 / 101.9 / 101.5 /
+  100.7 / 100.2s for 0 / 32 / 64 / 128 / inf) but inside that board's ~4% run-to-run noise,
+  so the default stays at 64 to bound the worst case on very large obstacle sets.
+
+- **RETRACTED 2026-07-25 — "Peak memory 1.2x-2.9x lower than main" was WRONG.** It came from a
+  single unrepeated pass of `/usr/bin/time -f %M`. Repeating it interleaved gave main 1317MB vs
+  current 1384MB on sample 5 and main 2447MB vs current 5287MB on sample 8 - i.e. the opposite -
+  and the *same code* moved 3x between runs. Peak RSS on this workload tracks JSC's opportunistic
+  heap growth (it expands when the box looks free), not what the program retains. `bun --smol`
+  made it worse, not better (5713MB vs 1957MB at equal wall time).
+  **Use live set instead**: heapUsed after a forced `Bun.gc(true)`, sampled periodically
+  (`~/.perf-scratch/mem-probe.ts`). On that metric, main vs current is a wash:
+  sample 5 361MB -> 278MB (-23%), sample 8 398MB -> 428MB (+7.5%), sample 6 main cannot finish.
+  Live sets are only 278-1060MB, so two thirds of "memory usage" is heap slack and memory is not
+  currently a binding constraint per process.
+  **Live-set composition at peak (sample 8, V8 snapshot, 731.8MB attributed):** strings 287.6MB
+  (39.3%, 1.0M of them), engine-internal 249.2MB (34%), Float64Array 60.4MB (8.3%), plain objects
+  34.6MB (4.7%, 522k of them), closures 15MB. Two 32MB BigUint64Arrays are the snapshot
+  generator's own tables, not ours.
+  Consequences: (a) f32/integer *coordinates* would save ~4% of the live set - they are a
+  correctness and cache argument, not a memory one; (b) the real memory hog is string identifiers,
+  but those are only **2.1% of CPU** (areIdsConnected 0.52%, Set 0.59%, getElementId 0.46%), so
+  interning is a memory-only play and memory is not the constraint. Deprioritized.
+
+- **2026-07-25 — Peak memory: SUPERSEDED, see retraction above.**
   Measured end-to-end with `/usr/bin/time -f %M`, one process at a time on a quiet box,
   main (tscircuit-autorouter @ v0.0.714, pristine deps) vs current (awt-r3 perf-round3 +
   patched math-utils):
