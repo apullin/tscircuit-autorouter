@@ -779,11 +779,32 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
         sumCandidateWorkF += iterations
         if (iterations > maxCandidateWorkF) maxCandidateWorkF = iterations
       }
+      // WHY did this node fail? A candidate that ended with iterations >=
+      // MAX_ITERATIONS ran out of BUDGET (more search could help: racing,
+      // sampling, prediction). One that ended failed while under budget ran
+      // out of SEARCH SPACE - the A* proved no path exists under its cost
+      // model, so re-searching the same geometry cannot help.
+      let budgetExhausted = 0
+      let searchExhausted = 0
+      let stillRunning = 0
+      for (const { solver } of this.supervisedSolvers ?? []) {
+        const cap = (solver as any).MAX_ITERATIONS ?? 0
+        const iters = (solver as any).iterations ?? 0
+        if ((solver as any).failed) {
+          if (cap > 0 && iters >= cap) budgetExhausted++
+          else searchExhausted++
+        } else if (!(solver as any).solved) {
+          stillRunning++
+        }
+      }
       g.__supervisorStats.push({
         nodeId: this.nodeWithPortPoints.capacityMeshNodeId,
         nodeFailed: true,
         maxCandidateWork: maxCandidateWorkF,
         sumCandidateWork: sumCandidateWorkF,
+        budgetExhausted,
+        searchExhausted,
+        stillRunning,
         points: this.nodeWithPortPoints.portPoints.length,
         totalCandidateWork: this.getTotalCandidateWork(),
         candidates: this.supervisedSolvers?.length ?? 0,
@@ -972,6 +993,20 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
       // candidate runs concurrently, losers cancelled once the winner lands).
       // The ratio is the hard ceiling on any racing scheme, measured before
       // committing to one.
+      // How many candidates had already proved infeasible (search exhausted)
+      // by the time the winner solved? If winners always land early, giving up
+      // after N exhaustions is a precise, output-identical way to abandon the
+      // doomed nodes that dominate wall time.
+      let exhaustedBeforeWin = 0
+      let failedBeforeWin = 0
+      for (const { solver } of this.supervisedSolvers ?? []) {
+        if ((solver as any).failed) {
+          failedBeforeWin++
+          const cap = (solver as any).MAX_ITERATIONS ?? 0
+          const iters = (solver as any).iterations ?? 0
+          if (!(cap > 0 && iters >= cap)) exhaustedBeforeWin++
+        }
+      }
       let maxCandidateWork = 0
       let sumCandidateWork = 0
       let countedCandidates = 0
@@ -985,6 +1020,8 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
         winnerHp: JSON.stringify(solver.hyperParameters),
         winnerIterations: solver.solver.iterations,
         winnerKind: solver.solver.constructor.name,
+        exhaustedBeforeWin,
+        failedBeforeWin,
         totalCandidateWork: this.getTotalCandidateWork(),
         maxCandidateWork,
         sumCandidateWork,
