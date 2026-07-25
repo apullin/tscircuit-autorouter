@@ -5,6 +5,28 @@ perf-audit-2026-07-23.md. Baselines: main @ v0.0.714 (b7b243cc), 64-thread x86, 
 
 ## Confirmed
 
+- **2026-07-25 — REJECTED: exact grid coordinates + future-point memo.** No speed, mixed quality.
+  Hypothesis (good one, and it was structurally real): the HD A* explores on a QUANTIZED cell key
+  (`getPackedNodeKey` rounds to cellStep) but computes costs on RAW coordinates built by
+  accumulating `node.x + dx*cellStep`. So one logical cell has many float representations
+  depending on the path taken there — the source of dust like 19.45000000000001 — which (a) blocks
+  memoization and (b) fed the upstream collinear bug.
+  Fix built: derive every position as `gridOrigin + index*cellStep` from an integer index, clamp in
+  INDEX space. Coordinates became path-independent, and the future-point memo then verified EXACT
+  (grid-only and grid+memo hash identically, a0156491 on sample 5).
+  Measured (2 interleaved rounds, quality metrics not hashes since results legitimately change):
+  | board | wall legacy -> exact | vias | segments | median trace |
+  |---|---|---|---|---|
+  | sample 8 | 101s -> 100.4s | 290 -> 291 | 2857 -> 2792 | 4.016 -> 3.95mm |
+  | sample 6 | 238s -> **254s (+6.7%)** | 290 -> 291 | 3974 -> 4223 | 3.90 -> 4.018mm |
+  Quality moves in OPPOSITE directions on the two boards and there is no speed win. The memo fails
+  because the scan it replaces already has cheap early-rejects (~20-100ns) while a Map lookup over
+  a 200k-entry table costs the same — independently reproducing round 6's "85.9% call redundancy
+  but memoizing is 11% slower", this time with integer keys. The redundancy is real and worthless.
+  Reverted. NOTE the structural observation stands and is worth keeping: quantized exploration with
+  unquantized costs is a latent inconsistency, and `Math.round(0.5)` behaviour at the half-cell
+  start offset makes cell assignment sensitive to dust.
+
 - **2026-07-25 — REJECTED: exhaustion-based node abandonment. Fast on most boards, catastrophic
   on one.** Commit 2c4a73da, `TS_MAX_EXHAUSTIONS`, shipped OFF.
   Targets the nodes consuming 68-88% of HD search that fail anyway. Single boards looked like a
