@@ -566,23 +566,29 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
 
     const segCount = obstacleSegments.length
     if (segCount > 0) {
-      const bMinX = new Float64Array(segCount)
-      const bMinY = new Float64Array(segCount)
-      const bMaxX = new Float64Array(segCount)
-      const bMaxY = new Float64Array(segCount)
+      // The bbox arrays serve the linear path only; when the R-tree is built
+      // it owns its own copy of the boxes, so allocating both wastes ~36
+      // bytes/segment for the lifetime of the solver.
       const buildIndex = segCount > LINEAR_SCAN_MAX
       const segmentIndex = buildIndex ? new Flatbush(segCount) : null
+      const bMinX = buildIndex ? EMPTY_F64 : new Float64Array(segCount)
+      const bMinY = buildIndex ? EMPTY_F64 : new Float64Array(segCount)
+      const bMaxX = buildIndex ? EMPTY_F64 : new Float64Array(segCount)
+      const bMaxY = buildIndex ? EMPTY_F64 : new Float64Array(segCount)
       for (let i = 0; i < segCount; i++) {
         const segment = obstacleSegments[i]!
         const minSx = Math.min(segment.A.x, segment.B.x)
         const minSy = Math.min(segment.A.y, segment.B.y)
         const maxSx = Math.max(segment.A.x, segment.B.x)
         const maxSy = Math.max(segment.A.y, segment.B.y)
-        bMinX[i] = minSx
-        bMinY[i] = minSy
-        bMaxX[i] = maxSx
-        bMaxY[i] = maxSy
-        segmentIndex?.add(minSx, minSy, maxSx, maxSy)
+        if (buildIndex) {
+          segmentIndex!.add(minSx, minSy, maxSx, maxSy)
+        } else {
+          bMinX[i] = minSx
+          bMinY[i] = minSy
+          bMaxX[i] = maxSx
+          bMaxY[i] = maxSy
+        }
       }
       segmentIndex?.finish()
       this.segBoxMinX = bMinX
@@ -590,7 +596,9 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
       this.segBoxMaxX = bMaxX
       this.segBoxMaxY = bMaxY
       this.obstacleSegmentIndex = segmentIndex
-      if (this.candIds.length < segCount) this.candIds = new Int32Array(segCount)
+      if (!buildIndex && this.candIds.length < segCount) {
+        this.candIds = new Int32Array(segCount)
+      }
     } else {
       this.obstacleSegmentIndex = null
       this.segBoxMinX = EMPTY_F64
@@ -598,15 +606,18 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
 
     const viaCount = obstacleVias.length
     if (viaCount > 0) {
-      const vx = new Float64Array(viaCount)
-      const vy = new Float64Array(viaCount)
       const buildViaIndex = viaCount > LINEAR_SCAN_MAX
       const viaIndex = buildViaIndex ? new Flatbush(viaCount) : null
+      const vx = buildViaIndex ? EMPTY_F64 : new Float64Array(viaCount)
+      const vy = buildViaIndex ? EMPTY_F64 : new Float64Array(viaCount)
       for (let i = 0; i < viaCount; i++) {
         const via = obstacleVias[i]!
-        vx[i] = via.x
-        vy[i] = via.y
-        viaIndex?.add(via.x, via.y, via.x, via.y)
+        if (buildViaIndex) {
+          viaIndex!.add(via.x, via.y, via.x, via.y)
+        } else {
+          vx[i] = via.x
+          vy[i] = via.y
+        }
       }
       viaIndex?.finish()
       this.viaX = vx
