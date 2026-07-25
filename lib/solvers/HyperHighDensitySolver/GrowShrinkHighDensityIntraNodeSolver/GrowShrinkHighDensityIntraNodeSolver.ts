@@ -7,6 +7,12 @@ import type {
 import { BaseSolver } from "../../BaseSolver"
 
 /** TS_SALVAGE_PARTIAL=1: route k-1 connections instead of surrendering a node. */
+/** TS_SALVAGE_BEFORE_GROW=1: prefer k-1 legal routes over a scaled (illegal) solve. */
+const SALVAGE_BEFORE_GROW =
+  typeof process !== "undefined" &&
+  !!process.env.TS_SALVAGE_BEFORE_GROW &&
+  process.env.TS_SALVAGE_BEFORE_GROW !== "0"
+
 const SALVAGE_PARTIAL =
   typeof process !== "undefined" &&
   !!process.env.TS_SALVAGE_PARTIAL &&
@@ -169,8 +175,14 @@ export class GrowShrinkHighDensityIntraNodeSolver extends BaseSolver {
     }
     if (connectionNames.length < 2) return null
 
-    const stepBudget = Number(process.env.TS_SALVAGE_STEPS ?? 200_000)
+    // Salvage is unbounded work in the worst case: k full portfolio runs per
+    // node. On srj18 sample 6 (41 failing nodes vs sample 8's 12) that turned
+    // 268s into >900s. Bound both the attempts and each attempt's budget.
+    const stepBudget = Number(process.env.TS_SALVAGE_STEPS ?? 25_000)
+    const maxAttempts = Number(process.env.TS_SALVAGE_MAX_ATTEMPTS ?? 3)
+    let attempts = 0
     for (const dropped of connectionNames) {
+      if (attempts++ >= maxAttempts) break
       const solver = new PortfolioSingleIntraNodeSolver({
         ...this.constructorParams,
         nodeWithPortPoints: {
@@ -317,6 +329,48 @@ export class GrowShrinkHighDensityIntraNodeSolver extends BaseSolver {
       this.failed = true
       this.error = `GrowShrinkHighDensityIntraNodeSolver failed after resizing to ${this.scaleFactor}x. Last error: ${this.error}`
       return
+    }
+
+    // TS_SALVAGE_BEFORE_GROW=1: growing the node is a DRC-violating relaxation.
+    // scaleRoute() shrinks the solution by 1/scaleFactor but leaves
+    // traceThickness/viaDiameter unscaled, so a 2x solve with 0.15mm clearance
+    // between 0.15mm traces returns a 0mm gap (4x returns overlap). Measured:
+    // the 12 grown nodes on srj18 sample 8 hold 10 of the board's 45 DRC errors
+    // - 22% of errors from 1% of nodes.
+    // experiments/drop-one.ts shows these nodes route fine with ONE connection
+    // removed (77% of removals work), so prefer k-1 legal routes plus a single
+    // invalid one over k illegal ones.
+    if (SALVAGE_BEFORE_GROW && this.growthAttempts === 0) {
+      const salvage = this.tryPartialSalvage()
+      if (salvage) {
+        const traceWidth = this.constructorParams.traceWidth ?? 0.15
+        const viaDiameter = this.constructorParams.viaDiameter ?? 0.3
+        const droppedNode = {
+          ...this.nodeWithPortPoints,
+          portPoints: this.nodeWithPortPoints.portPoints.filter(
+            (p) => p.connectionName === salvage.dropped,
+          ),
+        }
+        this.solvedRoutes = [
+          ...salvage.routes,
+          ...createInvalidDirectConnectionRoutes(
+            droppedNode,
+            traceWidth,
+            viaDiameter,
+          ),
+        ]
+        this.solved = true
+        this.failed = false
+        this.progress = 1
+        this.error = null
+        this.stats = {
+          ...this.stats,
+          partialSalvageInsteadOfGrowth: true,
+          salvagedConnections: salvage.routes.length,
+          droppedConnection: salvage.dropped,
+        }
+        return
+      }
     }
 
     this.growthAttempts++
