@@ -5,6 +5,11 @@ import {
 } from "@tscircuit/math-utils"
 import { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import Flatbush from "flatbush"
+
+const EMPTY_F64 = new Float64Array(0)
+const EMPTY_I32 = new Int32Array(0)
+/** Above this many obstacles the R-tree beats a linear bbox scan. */
+const LINEAR_SCAN_MAX = Number(process.env.TS_LINEAR_SCAN_MAX ?? 64)
 import type { GraphicsObject } from "graphics-debug"
 import {
   Node,
@@ -96,6 +101,23 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
   obstacleSegmentIndex: Flatbush | null = null
   obstacleVias: IndexedObstacleVia[] = []
   obstacleViaIndex: Flatbush | null = null
+
+  /**
+   * Small obstacle sets skip the R-tree entirely. Measured on srj18 sample 5:
+   * of 2104 obstacle indexes built, ~90% hold <=32 segments and 82% hold <=2
+   * vias, so a Flatbush query (tree descent + two array allocations per call)
+   * and its construction cost more than scanning bounding boxes out of typed
+   * arrays. Candidate sets are identical - the same bbox test the index
+   * applies is applied here - so decisions are unchanged.
+   */
+  private segBoxMinX: Float64Array = EMPTY_F64
+  private segBoxMinY: Float64Array = EMPTY_F64
+  private segBoxMaxX: Float64Array = EMPTY_F64
+  private segBoxMaxY: Float64Array = EMPTY_F64
+  private viaX: Float64Array = EMPTY_F64
+  private viaY: Float64Array = EMPTY_F64
+  private candIds: Int32Array = EMPTY_I32
+  private candCount = 0
 
   /** For debugging/animating the exploration */
   debug_exploredNodesOrdered: string[]
@@ -347,15 +369,17 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
     }
 
     const traceProximity = this.traceThickness + margin
-    if (this.obstacleSegmentIndex) {
-      const nearbySegmentIds = this.obstacleSegmentIndex.search(
+    if (this.obstacleSegments.length > 0) {
+      this.collectSegmentCandidates(
         node.x - traceProximity,
         node.y - traceProximity,
         node.x + traceProximity,
         node.y + traceProximity,
       )
-      for (const segmentId of nearbySegmentIds) {
-        const segment = this.obstacleSegments[segmentId]
+      const candIds = this.candIds
+      const candCount = this.candCount
+      for (let k = 0; k < candCount; k++) {
+        const segment = this.obstacleSegments[candIds[k]!]
         if (!segment || segment.connectedToCurrentConnection) continue
         if (!isVia && segment.z !== node.z) continue
         if (
@@ -367,17 +391,37 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
     }
 
     const viaProximity = this.viaDiameter / 2 + this.traceThickness / 2 + margin
-    if (this.obstacleViaIndex) {
-      const nearbyViaIds = this.obstacleViaIndex.search(
-        node.x - viaProximity,
-        node.y - viaProximity,
-        node.x + viaProximity,
-        node.y + viaProximity,
-      )
-      for (const viaId of nearbyViaIds) {
-        const via = this.obstacleVias[viaId]
-        if (via && distance(node, via) < viaProximity) {
-          return true
+    if (this.obstacleVias.length > 0) {
+      const index = this.obstacleViaIndex
+      if (index) {
+        const nearbyViaIds = index.search(
+          node.x - viaProximity,
+          node.y - viaProximity,
+          node.x + viaProximity,
+          node.y + viaProximity,
+        )
+        for (const viaId of nearbyViaIds) {
+          const via = this.obstacleVias[viaId]
+          if (via && distance(node, via) < viaProximity) {
+            return true
+          }
+        }
+      } else {
+        // Same box test the index would apply, then the identical predicate.
+        const vx = this.viaX
+        const vy = this.viaY
+        const qMinX = node.x - viaProximity
+        const qMinY = node.y - viaProximity
+        const qMaxX = node.x + viaProximity
+        const qMaxY = node.y + viaProximity
+        for (let i = 0; i < vx.length; i++) {
+          const x = vx[i]!
+          if (qMaxX < x || qMinX > x) continue
+          const y = vy[i]!
+          if (qMaxY < y || qMinY > y) continue
+          if (distance(node, this.obstacleVias[i]!) < viaProximity) {
+            return true
+          }
         }
       }
     }
@@ -409,7 +453,7 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
   doesPathToParentIntersectObstacle(node: Node) {
     const parent = node.parent
     if (!parent) return false
-    if (!this.obstacleSegmentIndex) return false
+    if (this.obstacleSegments.length === 0) return false
 
     const clearance =
       node.z === parent.z && this.obstacleSegments.length > 0
@@ -421,15 +465,17 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
     const minY = Math.min(node.y, parent.y)
     const maxY = Math.max(node.y, parent.y)
 
-    const nearbySegmentIds = this.obstacleSegmentIndex.search(
+    this.collectSegmentCandidates(
       minX - clearance,
       minY - clearance,
       maxX + clearance,
       maxY + clearance,
     )
+    const candIds = this.candIds
+    const candCount = this.candCount
 
-    for (const segmentId of nearbySegmentIds) {
-      const segment = this.obstacleSegments[segmentId]
+    for (let k = 0; k < candCount; k++) {
+      const segment = this.obstacleSegments[candIds[k]!]
       if (!segment || segment.connectedToCurrentConnection) continue
       if (segment.z !== node.z) continue
       // TODO: find out why removing doSegmentsIntersect is causing more intersections
@@ -518,32 +564,95 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
     this.obstacleSegments = obstacleSegments
     this.obstacleVias = obstacleVias
 
-    if (obstacleSegments.length > 0) {
-      const segmentIndex = new Flatbush(obstacleSegments.length)
-      for (const segment of obstacleSegments) {
-        segmentIndex.add(
-          Math.min(segment.A.x, segment.B.x),
-          Math.min(segment.A.y, segment.B.y),
-          Math.max(segment.A.x, segment.B.x),
-          Math.max(segment.A.y, segment.B.y),
-        )
+    const segCount = obstacleSegments.length
+    if (segCount > 0) {
+      const bMinX = new Float64Array(segCount)
+      const bMinY = new Float64Array(segCount)
+      const bMaxX = new Float64Array(segCount)
+      const bMaxY = new Float64Array(segCount)
+      const buildIndex = segCount > LINEAR_SCAN_MAX
+      const segmentIndex = buildIndex ? new Flatbush(segCount) : null
+      for (let i = 0; i < segCount; i++) {
+        const segment = obstacleSegments[i]!
+        const minSx = Math.min(segment.A.x, segment.B.x)
+        const minSy = Math.min(segment.A.y, segment.B.y)
+        const maxSx = Math.max(segment.A.x, segment.B.x)
+        const maxSy = Math.max(segment.A.y, segment.B.y)
+        bMinX[i] = minSx
+        bMinY[i] = minSy
+        bMaxX[i] = maxSx
+        bMaxY[i] = maxSy
+        segmentIndex?.add(minSx, minSy, maxSx, maxSy)
       }
-      segmentIndex.finish()
+      segmentIndex?.finish()
+      this.segBoxMinX = bMinX
+      this.segBoxMinY = bMinY
+      this.segBoxMaxX = bMaxX
+      this.segBoxMaxY = bMaxY
       this.obstacleSegmentIndex = segmentIndex
+      if (this.candIds.length < segCount) this.candIds = new Int32Array(segCount)
     } else {
       this.obstacleSegmentIndex = null
+      this.segBoxMinX = EMPTY_F64
     }
 
-    if (obstacleVias.length > 0) {
-      const viaIndex = new Flatbush(obstacleVias.length)
-      for (const via of obstacleVias) {
-        viaIndex.add(via.x, via.y, via.x, via.y)
+    const viaCount = obstacleVias.length
+    if (viaCount > 0) {
+      const vx = new Float64Array(viaCount)
+      const vy = new Float64Array(viaCount)
+      const buildViaIndex = viaCount > LINEAR_SCAN_MAX
+      const viaIndex = buildViaIndex ? new Flatbush(viaCount) : null
+      for (let i = 0; i < viaCount; i++) {
+        const via = obstacleVias[i]!
+        vx[i] = via.x
+        vy[i] = via.y
+        viaIndex?.add(via.x, via.y, via.x, via.y)
       }
-      viaIndex.finish()
+      viaIndex?.finish()
+      this.viaX = vx
+      this.viaY = vy
       this.obstacleViaIndex = viaIndex
     } else {
       this.obstacleViaIndex = null
+      this.viaX = EMPTY_F64
     }
+  }
+
+  /**
+   * Collects obstacle-segment ids whose bounding box intersects the query box
+   * into this.candIds / this.candCount. Uses the R-tree when one was built,
+   * otherwise scans the bbox arrays. Both paths yield the same set.
+   */
+  private collectSegmentCandidates(
+    minX: number,
+    minY: number,
+    maxX: number,
+    maxY: number,
+  ): void {
+    const index = this.obstacleSegmentIndex
+    if (index) {
+      const found = index.search(minX, minY, maxX, maxY)
+      const n = found.length
+      if (this.candIds.length < n) this.candIds = new Int32Array(n)
+      const buf = this.candIds
+      for (let i = 0; i < n; i++) buf[i] = found[i]!
+      this.candCount = n
+      return
+    }
+    const bMinX = this.segBoxMinX
+    const bMinY = this.segBoxMinY
+    const bMaxX = this.segBoxMaxX
+    const bMaxY = this.segBoxMaxY
+    const buf = this.candIds
+    let count = 0
+    for (let i = 0; i < bMinX.length; i++) {
+      if (maxX < bMinX[i]!) continue
+      if (maxY < bMinY[i]!) continue
+      if (minX > bMaxX[i]!) continue
+      if (minY > bMaxY[i]!) continue
+      buf[count++] = i
+    }
+    this.candCount = count
   }
 
   computeH(node: Node) {
