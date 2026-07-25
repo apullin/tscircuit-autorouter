@@ -773,9 +773,17 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
         __supervisorStats?: Array<Record<string, unknown>>
       }
       g.__supervisorStats ??= []
+      let maxCandidateWorkF = 0
+      let sumCandidateWorkF = 0
+      for (const iterations of this.lastCountedCandidateIterations.values()) {
+        sumCandidateWorkF += iterations
+        if (iterations > maxCandidateWorkF) maxCandidateWorkF = iterations
+      }
       g.__supervisorStats.push({
         nodeId: this.nodeWithPortPoints.capacityMeshNodeId,
         nodeFailed: true,
+        maxCandidateWork: maxCandidateWorkF,
+        sumCandidateWork: sumCandidateWorkF,
         points: this.nodeWithPortPoints.portPoints.length,
         totalCandidateWork: this.getTotalCandidateWork(),
         candidates: this.supervisedSolvers?.length ?? 0,
@@ -959,12 +967,28 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
         ;(globalThis as unknown as { __capturedParams?: unknown })
           .__capturedParams = this.constructorParams
       }
+      // Per-candidate work at the moment the winner is known. Sequential cost
+      // is the SUM of these; a perfect in-process race costs the MAX (every
+      // candidate runs concurrently, losers cancelled once the winner lands).
+      // The ratio is the hard ceiling on any racing scheme, measured before
+      // committing to one.
+      let maxCandidateWork = 0
+      let sumCandidateWork = 0
+      let countedCandidates = 0
+      for (const iterations of this.lastCountedCandidateIterations.values()) {
+        sumCandidateWork += iterations
+        countedCandidates++
+        if (iterations > maxCandidateWork) maxCandidateWork = iterations
+      }
       g.__supervisorStats.push({
         nodeId: this.nodeWithPortPoints.capacityMeshNodeId,
         winnerHp: JSON.stringify(solver.hyperParameters),
         winnerIterations: solver.solver.iterations,
         winnerKind: solver.solver.constructor.name,
         totalCandidateWork: this.getTotalCandidateWork(),
+        maxCandidateWork,
+        sumCandidateWork,
+        countedCandidates,
         candidates: this.supervisedSolvers?.length ?? 0,
         supervisorIterations: this.iterations,
         expanded: this.adaptiveSearchExpanded,
