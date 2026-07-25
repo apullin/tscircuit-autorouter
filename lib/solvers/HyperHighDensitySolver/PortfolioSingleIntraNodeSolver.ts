@@ -814,6 +814,7 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
       g.__supervisorStats.push({
         nodeId: this.nodeWithPortPoints.capacityMeshNodeId,
         nodeFailed: true,
+        geom: this.dumpNodeGeometry(),
         maxCandidateWork: maxCandidateWorkF,
         sumCandidateWork: sumCandidateWorkF,
         budgetExhausted,
@@ -985,6 +986,33 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
     })
   }
 
+
+  /**
+   * PERF_NODE_DUMP=1: compact node geometry for offline feasibility analysis
+   * (cut-capacity bound vs actual solve/fail outcome). Stats-only.
+   */
+  private dumpNodeGeometry(): Record<string, unknown> | undefined {
+    if (typeof process === "undefined" || !process.env.PERF_NODE_DUMP) return
+    const n = this.nodeWithPortPoints
+    const params = this.constructorParams as any
+    return {
+      w: n.width,
+      h: n.height,
+      cx: n.center.x,
+      cy: n.center.y,
+      availableZ: n.availableZ ?? [0, 1],
+      traceWidth: params?.traceWidth ?? 0.15,
+      viaDiameter: params?.viaDiameter ?? 0.3,
+      obstacleMargin: params?.obstacleMargin ?? 0.15,
+      ports: n.portPoints.map((pp: any) => ({
+        x: pp.x,
+        y: pp.y,
+        z: pp.z ?? 0,
+        c: pp.connectionName,
+      })),
+    }
+  }
+
   onSolve(solver: SupervisedSolver<IntraNodeRouteSolver>) {
     // PERF_SUPERVISOR_STATS=1: record the sequential-schedule work ratio
     // R = total candidate work / winner work for the parallelism design
@@ -1034,6 +1062,7 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
         winnerHp: JSON.stringify(solver.hyperParameters),
         winnerIterations: solver.solver.iterations,
         winnerKind: solver.solver.constructor.name,
+        geom: this.dumpNodeGeometry(),
         exhaustedBeforeWin,
         failedBeforeWin,
         totalCandidateWork: this.getTotalCandidateWork(),
