@@ -3,7 +3,7 @@
  * Hash identity does not apply, so compare what actually matters:
  *   traces / vias / total+median trace length / unrouted connections / DRC.
  */
-const REPO = "/home/pullin/personal/awt-r3"
+const REPO = "/home/pullin/personal/awt-exp"
 const { AutoroutingPipelineSolver7_MultiGraph } = await import(
   `${REPO}/lib/autorouter-pipelines/AutoroutingPipeline7_MultiGraph/AutoroutingPipelineSolver7_MultiGraph.ts`
 )
