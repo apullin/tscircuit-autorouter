@@ -866,6 +866,11 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
           stillRunning++
         }
       }
+      if (process.env.PERF_CAPTURE_FAILED) {
+        const gg = globalThis as unknown as { __failedNodeParams?: unknown[] }
+        gg.__failedNodeParams ??= []
+        gg.__failedNodeParams.push(this.constructorParams)
+      }
       g.__supervisorStats.push({
         nodeId: this.nodeWithPortPoints.capacityMeshNodeId,
         nodeFailed: true,
