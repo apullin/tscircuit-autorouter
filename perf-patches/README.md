@@ -47,6 +47,15 @@ rm+cp also works. Never edit in place.
   indexed-candidate-heap hole-sifting (bit-identical, 20k-op differential).
   NOTE: Math.hypot→sqrt swaps were REVERTED (2026-07-24) — ulp differences flip
   A* tie-breaks on real boards and broke 3 SVG snapshot tests.
+- bun-tiny-hypergraph-hypot.patch — **QUALITY-GATED tier, apply AFTER
+  bun-tiny-hypergraph.patch.** The round-4 Math.hypot→sqrt swap (13 sites,
+  __h2 helper), re-activated 2026-07-26 after being lost from the live tree.
+  NOT result-identical: sample-5 identity anchor moves 1048233 → 1053687
+  iterations, and 3 SVG snapshots churn (bugreport51/58/60 — updated in the
+  same commit). Justification: round-4 corpus gate measured 1.054x srj18
+  aggregate with DRC 581→575 (net better), all dataset01 boards identical.
+  One Math.hypot deliberately remains (selective-rerip :455, outside the
+  measured swap; future R5 work).
 - bun-high-density-a01@0.0.36.patch — fillViaOccupants inlined + single-entry
   occupancy-version cache (A03 2.2x micro on dataset01 sample001), stepOnce /
   computeMoveCostAndRips invariant hoisting. Bit-identical outputs.
