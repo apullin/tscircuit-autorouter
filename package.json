@@ -98,6 +98,7 @@
   },
   "patchedDependencies": {
     "@tscircuit/checks@0.0.145": "perf-patches/bun-tscircuit-checks@0.0.145.patch",
+    "@tscircuit/math-utils@0.0.36": "perf-patches/bun-tscircuit-math-utils@0.0.36.patch",
     "circuit-json-to-connectivity-map@0.0.19": "perf-patches/bun-circuit-json-to-connectivity-map@0.0.19.patch"
   }
 }

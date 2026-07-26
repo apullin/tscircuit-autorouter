@@ -1,0 +1,838 @@
+diff --git a/dist/chunk-5MWPBFQG.js b/dist/chunk-5MWPBFQG.js
+new file mode 100644
+index 0000000..f2dd42a
+--- /dev/null
++++ b/dist/chunk-5MWPBFQG.js
+@@ -0,0 +1,109 @@
++import {
++  distance,
++  doSegmentsIntersect,
++  pointToSegmentDistance
++} from "./chunk-PUVNW6C2.js";
++import {
++  clamp
++} from "./chunk-DRDDWFOS.js";
++
++// src/segment-distance.ts
++function segmentToSegmentMinDistance(a, b, u, v) {
++  if (a.x === b.x && a.y === b.y) {
++    return pointToSegmentDistance(a, u, v);
++  }
++  if (u.x === v.x && u.y === v.y) {
++    return pointToSegmentDistance(u, a, b);
++  }
++  if (doSegmentsIntersect(a, b, u, v)) {
++    return 0;
++  }
++  return Math.min(
++    Math.min(pointToSegmentDistance(a, u, v), pointToSegmentDistance(b, u, v)),
++    Math.min(pointToSegmentDistance(u, a, b), pointToSegmentDistance(v, a, b))
++  );
++}
++function segmentToBoundsMinDistance(a, b, bounds) {
++  const topLeft = { x: bounds.minX, y: bounds.minY };
++  const topRight = { x: bounds.maxX, y: bounds.minY };
++  const bottomLeft = { x: bounds.minX, y: bounds.maxY };
++  const bottomRight = { x: bounds.maxX, y: bounds.maxY };
++  if (doSegmentsIntersect(a, b, topLeft, topRight) || doSegmentsIntersect(a, b, topRight, bottomRight) || doSegmentsIntersect(a, b, bottomRight, bottomLeft) || doSegmentsIntersect(a, b, bottomLeft, topLeft)) {
++    return 0;
++  }
++  if (a.x >= bounds.minX && a.x <= bounds.maxX && a.y >= bounds.minY && a.y <= bounds.maxY && b.x >= bounds.minX && b.x <= bounds.maxX && b.y >= bounds.minY && b.y <= bounds.maxY) {
++    return 0;
++  }
++  const distances = [
++    pointToSegmentDistance(topLeft, a, b),
++    pointToSegmentDistance(topRight, a, b),
++    pointToSegmentDistance(bottomLeft, a, b),
++    pointToSegmentDistance(bottomRight, a, b)
++  ];
++  if (a.x >= bounds.minX && a.x <= bounds.maxX && a.y >= bounds.minY && a.y <= bounds.maxY) {
++    return 0;
++  }
++  if (b.x >= bounds.minX && b.x <= bounds.maxX && b.y >= bounds.minY && b.y <= bounds.maxY) {
++    return 0;
++  }
++  if (a.x < bounds.minX || a.x > bounds.maxX || a.y < bounds.minY || a.y > bounds.maxY) {
++    const closestX = clamp(a.x, bounds.minX, bounds.maxX);
++    const closestY = clamp(a.y, bounds.minY, bounds.maxY);
++    distances.push(distance(a, { x: closestX, y: closestY }));
++  }
++  if (b.x < bounds.minX || b.x > bounds.maxX || b.y < bounds.minY || b.y > bounds.maxY) {
++    const closestX = clamp(b.x, bounds.minX, bounds.maxX);
++    const closestY = clamp(b.y, bounds.minY, bounds.maxY);
++    distances.push(distance(b, { x: closestX, y: closestY }));
++  }
++  return Math.min(...distances);
++}
++function segmentToBoxMinDistance(a, b, box) {
++  const halfWidth = box.width / 2;
++  const halfHeight = box.height / 2;
++  const bounds = {
++    minX: box.center.x - halfWidth,
++    maxX: box.center.x + halfWidth,
++    minY: box.center.y - halfHeight,
++    maxY: box.center.y + halfHeight
++  };
++  return segmentToBoundsMinDistance(a, b, bounds);
++}
++function segmentToCircleMinDistance(a, b, circle) {
++  const circleCenter = { x: circle.x, y: circle.y };
++  if (a.x === b.x && a.y === b.y) {
++    return Math.max(0, distance(a, circleCenter) - circle.radius);
++  }
++  const ab = { x: b.x - a.x, y: b.y - a.y };
++  const ac = { x: circleCenter.x - a.x, y: circleCenter.y - a.y };
++  const abLengthSq = ab.x * ab.x + ab.y * ab.y;
++  const t = Math.max(0, Math.min(1, (ab.x * ac.x + ab.y * ac.y) / abLengthSq));
++  const closestPoint = {
++    x: a.x + t * ab.x,
++    y: a.y + t * ab.y
++  };
++  const distToCenter = distance(closestPoint, circleCenter);
++  return Math.max(0, distToCenter - circle.radius);
++}
++function pointToSegmentClosestPoint(p, a, b) {
++  const dx_ab = b.x - a.x;
++  const dy_ab = b.y - a.y;
++  const l2 = dx_ab * dx_ab + dy_ab * dy_ab;
++  if (l2 === 0) return { x: a.x, y: a.y };
++  let t = ((p.x - a.x) * dx_ab + (p.y - a.y) * dy_ab) / l2;
++  t = Math.max(0, Math.min(1, t));
++  const closestPoint = {
++    x: a.x + t * dx_ab,
++    y: a.y + t * dy_ab
++  };
++  return closestPoint;
++}
++
++export {
++  segmentToSegmentMinDistance,
++  segmentToBoundsMinDistance,
++  segmentToBoxMinDistance,
++  segmentToCircleMinDistance,
++  pointToSegmentClosestPoint
++};
++//# sourceMappingURL=chunk-5MWPBFQG.js.map
+\ No newline at end of file
+diff --git a/dist/chunk-5MWPBFQG.js.map b/dist/chunk-5MWPBFQG.js.map
+new file mode 100644
+index 0000000..5636d3c
+--- /dev/null
++++ b/dist/chunk-5MWPBFQG.js.map
+@@ -0,0 +1 @@
++{"version":3,"sources":["../src/segment-distance.ts"],"sourcesContent":["import type { Point } from \"./common\"\nimport {\n  distance,\n  doSegmentsIntersect,\n  pointToSegmentDistance,\n} from \"./line-intersections\"\nimport { clamp } from \"./nearest-box\"\n\n/**\n * Returns the minimum distance between two line segments.\n */\nexport function segmentToSegmentMinDistance(\n  a: Point,\n  b: Point,\n  u: Point,\n  v: Point,\n): number {\n  // Handle degenerate cases: segments of zero length\n  if (a.x === b.x && a.y === b.y) {\n    return pointToSegmentDistance(a, u, v)\n  }\n  if (u.x === v.x && u.y === v.y) {\n    return pointToSegmentDistance(u, a, b)\n  }\n\n  // Check if segments intersect\n  if (doSegmentsIntersect(a, b, u, v)) {\n    return 0\n  }\n\n  // Compute the minimum distance between the segments (no array/spread: this\n  // is the hottest geometry call in dense clearance checking)\n  return Math.min(\n    Math.min(pointToSegmentDistance(a, u, v), pointToSegmentDistance(b, u, v)),\n    Math.min(pointToSegmentDistance(u, a, b), pointToSegmentDistance(v, a, b)),\n  )\n}\n\n/**\n * Returns the minimum distance from a line segment to a bounding box.\n */\nexport function segmentToBoundsMinDistance(\n  a: Point,\n  b: Point,\n  bounds: { minX: number; minY: number; maxX: number; maxY: number },\n): number {\n  // Check if segment intersects with the bounds\n  // Create the four edges of the bounds\n  const topLeft = { x: bounds.minX, y: bounds.minY }\n  const topRight = { x: bounds.maxX, y: bounds.minY }\n  const bottomLeft = { x: bounds.minX, y: bounds.maxY }\n  const bottomRight = { x: bounds.maxX, y: bounds.maxY }\n\n  // Check if segment intersects with any of the bounds edges\n  if (\n    doSegmentsIntersect(a, b, topLeft, topRight) ||\n    doSegmentsIntersect(a, b, topRight, bottomRight) ||\n    doSegmentsIntersect(a, b, bottomRight, bottomLeft) ||\n    doSegmentsIntersect(a, b, bottomLeft, topLeft)\n  ) {\n    return 0\n  }\n\n  // Check if segment is entirely inside the bounds\n  if (\n    a.x >= bounds.minX &&\n    a.x <= bounds.maxX &&\n    a.y >= bounds.minY &&\n    a.y <= bounds.maxY &&\n    b.x >= bounds.minX &&\n    b.x <= bounds.maxX &&\n    b.y >= bounds.minY &&\n    b.y <= bounds.maxY\n  ) {\n    return 0\n  }\n\n  // If not intersecting, calculate the minimum distance\n  const distances = [\n    pointToSegmentDistance(topLeft, a, b),\n    pointToSegmentDistance(topRight, a, b),\n    pointToSegmentDistance(bottomLeft, a, b),\n    pointToSegmentDistance(bottomRight, a, b),\n  ]\n\n  // If one of the segment endpoints is inside the bounds, we need to consider its distance to the bounds as 0\n  if (\n    a.x >= bounds.minX &&\n    a.x <= bounds.maxX &&\n    a.y >= bounds.minY &&\n    a.y <= bounds.maxY\n  ) {\n    return 0\n  }\n\n  if (\n    b.x >= bounds.minX &&\n    b.x <= bounds.maxX &&\n    b.y >= bounds.minY &&\n    b.y <= bounds.maxY\n  ) {\n    return 0\n  }\n\n  // Calculate distances from segment endpoints to bounds if outside\n  if (\n    a.x < bounds.minX ||\n    a.x > bounds.maxX ||\n    a.y < bounds.minY ||\n    a.y > bounds.maxY\n  ) {\n    const closestX = clamp(a.x, bounds.minX, bounds.maxX)\n    const closestY = clamp(a.y, bounds.minY, bounds.maxY)\n    distances.push(distance(a, { x: closestX, y: closestY }))\n  }\n\n  if (\n    b.x < bounds.minX ||\n    b.x > bounds.maxX ||\n    b.y < bounds.minY ||\n    b.y > bounds.maxY\n  ) {\n    const closestX = clamp(b.x, bounds.minX, bounds.maxX)\n    const closestY = clamp(b.y, bounds.minY, bounds.maxY)\n    distances.push(distance(b, { x: closestX, y: closestY }))\n  }\n\n  return Math.min(...distances)\n}\n\n/**\n * Returns the minimum distance from a line segment to a box.\n */\nexport function segmentToBoxMinDistance(\n  a: Point,\n  b: Point,\n  box: { center: Point; width: number; height: number },\n): number {\n  const halfWidth = box.width / 2\n  const halfHeight = box.height / 2\n  const bounds = {\n    minX: box.center.x - halfWidth,\n    maxX: box.center.x + halfWidth,\n    minY: box.center.y - halfHeight,\n    maxY: box.center.y + halfHeight,\n  }\n\n  return segmentToBoundsMinDistance(a, b, bounds)\n}\n\n/**\n * Returns the minimum distance from a line segment to a circle.\n */\nexport function segmentToCircleMinDistance(\n  a: Point,\n  b: Point,\n  circle: { x: number; y: number; radius: number },\n): number {\n  // Calculate the distance from the circle center to the line segment\n  const circleCenter = { x: circle.x, y: circle.y }\n\n  // Handle degenerate case: segment of zero length (point to circle)\n  if (a.x === b.x && a.y === b.y) {\n    return Math.max(0, distance(a, circleCenter) - circle.radius)\n  }\n\n  // Vector from a to b\n  const ab = { x: b.x - a.x, y: b.y - a.y }\n  // Vector from a to circle center\n  const ac = { x: circleCenter.x - a.x, y: circleCenter.y - a.y }\n\n  // Length of segment ab squared\n  const abLengthSq = ab.x * ab.x + ab.y * ab.y\n\n  // Calculate projection of ac onto ab, normalized by the length of ab\n  const t = Math.max(0, Math.min(1, (ab.x * ac.x + ab.y * ac.y) / abLengthSq))\n\n  // Find the closest point on the segment to the circle center\n  const closestPoint = {\n    x: a.x + t * ab.x,\n    y: a.y + t * ab.y,\n  }\n\n  // Calculate distance from closest point to circle center\n  const distToCenter = distance(closestPoint, circleCenter)\n\n  // Return the distance to the circle (subtract radius from distance to center)\n  return Math.max(0, distToCenter - circle.radius)\n}\n\nexport function pointToSegmentClosestPoint(\n  p: Point,\n  a: Point,\n  b: Point,\n): Point {\n  const dx_ab = b.x - a.x\n  const dy_ab = b.y - a.y\n  const l2 = dx_ab * dx_ab + dy_ab * dy_ab\n\n  if (l2 === 0) return { x: a.x, y: a.y } // Segment is a point\n\n  // Project p onto the line defined by a, b\n  // t = [(p - a) . (b - a)] / |b - a|^2\n  let t = ((p.x - a.x) * dx_ab + (p.y - a.y) * dy_ab) / l2\n\n  // Clamp t to the range [0, 1] to stay on the segment\n  t = Math.max(0, Math.min(1, t))\n\n  // Calculate the projection point\n  const closestPoint = {\n    x: a.x + t * dx_ab,\n    y: a.y + t * dy_ab,\n  }\n\n  return closestPoint\n}\n"],"mappings":"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","names":[]}
+\ No newline at end of file
+diff --git a/dist/chunk-5J3PCV4D.js b/dist/chunk-DKNCNARS.js
+similarity index 94%
+rename from dist/chunk-5J3PCV4D.js
+rename to dist/chunk-DKNCNARS.js
+index 6c25b3d..b82a5bc 100644
+--- a/dist/chunk-5J3PCV4D.js
++++ b/dist/chunk-DKNCNARS.js
+@@ -1,6 +1,6 @@
+ import {
+   distance
+-} from "./chunk-EFLPMB4J.js";
++} from "./chunk-I6J47HDD.js";
+ import {
+   clamp
+ } from "./chunk-DRDDWFOS.js";
+@@ -46,4 +46,4 @@ export {
+   midpoint,
+   distSq
+ };
+-//# sourceMappingURL=chunk-5J3PCV4D.js.map
+\ No newline at end of file
++//# sourceMappingURL=chunk-DKNCNARS.js.map
+\ No newline at end of file
+diff --git a/dist/chunk-5J3PCV4D.js.map b/dist/chunk-DKNCNARS.js.map
+similarity index 100%
+rename from dist/chunk-5J3PCV4D.js.map
+rename to dist/chunk-DKNCNARS.js.map
+diff --git a/dist/chunk-4V2EVVKE.js b/dist/chunk-EAXT6YBY.js
+similarity index 98%
+rename from dist/chunk-4V2EVVKE.js
+rename to dist/chunk-EAXT6YBY.js
+index 04d9a58..4d97f82 100644
+--- a/dist/chunk-4V2EVVKE.js
++++ b/dist/chunk-EAXT6YBY.js
+@@ -1,6 +1,6 @@
+ import {
+   doSegmentsIntersect
+-} from "./chunk-EFLPMB4J.js";
++} from "./chunk-I6J47HDD.js";
+ 
+ // src/polygon.ts
+ var universalRectToBounds = (rect) => {
+@@ -117,4 +117,4 @@ export {
+   isRectOverlappingPolygon,
+   isRectCompletelyInsidePolygon
+ };
+-//# sourceMappingURL=chunk-4V2EVVKE.js.map
+\ No newline at end of file
++//# sourceMappingURL=chunk-EAXT6YBY.js.map
+\ No newline at end of file
+diff --git a/dist/chunk-4V2EVVKE.js.map b/dist/chunk-EAXT6YBY.js.map
+similarity index 100%
+rename from dist/chunk-4V2EVVKE.js.map
+rename to dist/chunk-EAXT6YBY.js.map
+diff --git a/dist/chunk-EFLPMB4J.js.map b/dist/chunk-EFLPMB4J.js.map
+deleted file mode 100644
+index fec4f92..0000000
+--- a/dist/chunk-EFLPMB4J.js.map
++++ /dev/null
+@@ -1 +0,0 @@
+-{"version":3,"sources":["../src/line-intersections.ts"],"sourcesContent":["import type { Point } from \"./common\"\n\n/**\n * Returns true if the two lines intersect.\n */\nexport function doesLineIntersectLine(\n  [a1, a2]: [Point, Point],\n  [b1, b2]: [Point, Point],\n  {\n    lineThickness = 0,\n  }: {\n    lineThickness?: number\n  } = {},\n): boolean {\n  if (lineThickness === 0) {\n    return doSegmentsIntersect(a1, a2, b1, b2)\n  }\n  const minDist = segmentsDistance(a1, a2, b1, b2)\n  return minDist <= lineThickness\n}\n\n/**\n * Returns true if the two segments intersect.\n */\nexport function doSegmentsIntersect(\n  p1: Point,\n  q1: Point,\n  p2: Point,\n  q2: Point,\n): boolean {\n  const o1 = orientation(p1, q1, p2)\n  const o2 = orientation(p1, q1, q2)\n  const o3 = orientation(p2, q2, p1)\n  const o4 = orientation(p2, q2, q1)\n\n  // General case\n  if (o1 !== o2 && o3 !== o4) {\n    return true\n  }\n\n  // Special Cases\n  if (o1 === 0 && onSegment(p1, p2, q1)) return true\n  if (o2 === 0 && onSegment(p1, q2, q1)) return true\n  if (o3 === 0 && onSegment(p2, p1, q2)) return true\n  if (o4 === 0 && onSegment(p2, q1, q2)) return true\n\n  return false\n}\n\n/**\n * Returns 0 if the points are colinear, 1 if they are clockwise, and 2 if they are counterclockwise.\n */\nexport function orientation(p: Point, q: Point, r: Point): number {\n  const val = (q.y - p.y) * (r.x - q.x) - (q.x - p.x) * (r.y - q.y)\n  if (val === 0) return 0 // colinear\n  return val > 0 ? 1 : 2 // clock or counterclock wise\n}\n\n/**\n * Returns true if q is on the segment p->r.\n */\nexport function onSegment(p: Point, q: Point, r: Point): boolean {\n  return (\n    q.x <= Math.max(p.x, r.x) &&\n    q.x >= Math.min(p.x, r.x) &&\n    q.y <= Math.max(p.y, r.y) &&\n    q.y >= Math.min(p.y, r.y)\n  )\n}\n\n/**\n * Returns the minimum distance between two segments.\n */\nfunction segmentsDistance(a1: Point, a2: Point, b1: Point, b2: Point): number {\n  // Handle degenerate cases: segments of zero length\n  if (a1.x === a2.x && a1.y === a2.y) {\n    return pointToSegmentDistance(a1, b1, b2)\n  }\n  if (b1.x === b2.x && b1.y === b2.y) {\n    return pointToSegmentDistance(b1, a1, a2)\n  }\n\n  // Check if segments intersect\n  if (doSegmentsIntersect(a1, a2, b1, b2)) {\n    return 0\n  }\n\n  // Compute the minimum distance between the segments\n  const distances = [\n    pointToSegmentDistance(a1, b1, b2),\n    pointToSegmentDistance(a2, b1, b2),\n    pointToSegmentDistance(b1, a1, a2),\n    pointToSegmentDistance(b2, a1, a2),\n  ]\n\n  return Math.min(...distances)\n}\n\n/**\n * Returns the minimum distance between a point and a segment.\n */\nexport function pointToSegmentDistance(p: Point, v: Point, w: Point): number {\n  const l2 = (w.x - v.x) ** 2 + (w.y - v.y) ** 2\n  if (l2 === 0) return distance(p, v)\n\n  let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2\n  t = Math.max(0, Math.min(1, t))\n\n  const projection = {\n    x: v.x + t * (w.x - v.x),\n    y: v.y + t * (w.y - v.y),\n  }\n\n  return distance(p, projection)\n}\n\n/**\n * Returns the distance between two points.\n */\nexport function distance(p1: Point, p2: Point): number {\n  const dx = p1.x - p2.x\n  const dy = p1.y - p2.y\n  return Math.sqrt(dx * dx + dy * dy)\n}\n\n/**\n * Calculates the intersection point of two line segments.\n * Returns the intersection point {x, y} if the segments intersect, otherwise returns null.\n */\nexport function getSegmentIntersection(\n  a: Point,\n  b: Point,\n  u: Point,\n  v: Point,\n): Point | null {\n  const dx1 = b.x - a.x\n  const dy1 = b.y - a.y\n  const dx2 = v.x - u.x\n  const dy2 = v.y - u.y\n  const dx3 = a.x - u.x\n  const dy3 = a.y - u.y\n\n  const denominator = dx1 * dy2 - dy1 * dx2\n\n  // Check if lines are parallel or collinear\n  if (Math.abs(denominator) < 1e-10) {\n    // Lines are parallel or collinear\n    // We could add checks for collinear overlapping segments if needed,\n    // but for now, we return null as a single intersection point doesn't exist.\n    // The doSegmentsIntersect function handles collinearity checks if only a boolean is needed.\n    return null\n  }\n\n  // Correct formula for t (parameter for segment ab)\n  // t = (dy3 * dx2 - dx3 * dy2) / denominator\n  // The formula previously used was -(dy3 * dx2 - dx3 * dy2) / denominator\n  const t = (dy3 * dx2 - dx3 * dy2) / denominator\n  // Correct formula for s (parameter for segment uv)\n  // s = (dx1 * dy3 - dy1 * dx3) / denominator\n  // The formula previously used was incorrect.\n  const s = (dx1 * dy3 - dy1 * dx3) / denominator\n\n  // Check if the intersection point lies within both segments\n  // Use a small epsilon for floating point comparisons near 0 and 1\n  const epsilon = 1e-9\n  if (t >= -epsilon && t <= 1 + epsilon && s >= -epsilon && s <= 1 + epsilon) {\n    const intersectionX = a.x + t * dx1\n    const intersectionY = a.y + t * dy1\n    return { x: intersectionX, y: intersectionY }\n  }\n\n  // Segments do not intersect within their bounds\n  return null\n}\n\nexport function doesSegmentIntersectRect(\n  a: Point,\n  b: Point,\n  rect: { minX: number; minY: number; maxX: number; maxY: number },\n): boolean {\n  const pointInside = (p: Point) =>\n    p.x >= rect.minX && p.x <= rect.maxX && p.y >= rect.minY && p.y <= rect.maxY\n\n  if (pointInside(a) || pointInside(b)) {\n    return true\n  }\n\n  const topLeft = { x: rect.minX, y: rect.minY }\n  const topRight = { x: rect.maxX, y: rect.minY }\n  const bottomLeft = { x: rect.minX, y: rect.maxY }\n  const bottomRight = { x: rect.maxX, y: rect.maxY }\n\n  return (\n    doSegmentsIntersect(a, b, topLeft, topRight) ||\n    doSegmentsIntersect(a, b, topRight, bottomRight) ||\n    doSegmentsIntersect(a, b, bottomRight, bottomLeft) ||\n    doSegmentsIntersect(a, b, bottomLeft, topLeft)\n  )\n}\n"],"mappings":"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","names":[]}
+\ No newline at end of file
+diff --git a/dist/chunk-EFLPMB4J.js b/dist/chunk-I6J47HDD.js
+similarity index 89%
+rename from dist/chunk-EFLPMB4J.js
+rename to dist/chunk-I6J47HDD.js
+index be8f460..2ba981a 100644
+--- a/dist/chunk-EFLPMB4J.js
++++ b/dist/chunk-I6J47HDD.js
+@@ -22,9 +22,15 @@ function doSegmentsIntersect(p1, q1, p2, q2) {
+   if (o4 === 0 && onSegment(p2, q1, q2)) return true;
+   return false;
+ }
++var COLINEAR_RELATIVE_EPSILON = 1e-12;
+ function orientation(p, q, r) {
+-  const val = (q.y - p.y) * (r.x - q.x) - (q.x - p.x) * (r.y - q.y);
+-  if (val === 0) return 0;
++  const term1 = (q.y - p.y) * (r.x - q.x);
++  const term2 = (q.x - p.x) * (r.y - q.y);
++  const val = term1 - term2;
++  const absTerm1 = Math.abs(term1);
++  const absTerm2 = Math.abs(term2);
++  const scale = absTerm1 > absTerm2 ? absTerm1 : absTerm2;
++  if (Math.abs(val) <= COLINEAR_RELATIVE_EPSILON * scale) return 0;
+   return val > 0 ? 1 : 2;
+ }
+ function onSegment(p, q, r) {
+@@ -107,4 +113,4 @@ export {
+   getSegmentIntersection,
+   doesSegmentIntersectRect
+ };
+-//# sourceMappingURL=chunk-EFLPMB4J.js.map
+\ No newline at end of file
++//# sourceMappingURL=chunk-I6J47HDD.js.map
+\ No newline at end of file
+diff --git a/dist/chunk-I6J47HDD.js.map b/dist/chunk-I6J47HDD.js.map
+new file mode 100644
+index 0000000..62c29c5
+--- /dev/null
++++ b/dist/chunk-I6J47HDD.js.map
+@@ -0,0 +1 @@
++{"version":3,"sources":["../src/line-intersections.ts"],"sourcesContent":["import type { Point } from \"./common\"\n\n/**\n * Returns true if the two lines intersect.\n */\nexport function doesLineIntersectLine(\n  [a1, a2]: [Point, Point],\n  [b1, b2]: [Point, Point],\n  {\n    lineThickness = 0,\n  }: {\n    lineThickness?: number\n  } = {},\n): boolean {\n  if (lineThickness === 0) {\n    return doSegmentsIntersect(a1, a2, b1, b2)\n  }\n  const minDist = segmentsDistance(a1, a2, b1, b2)\n  return minDist <= lineThickness\n}\n\n/**\n * Returns true if the two segments intersect.\n */\nexport function doSegmentsIntersect(\n  p1: Point,\n  q1: Point,\n  p2: Point,\n  q2: Point,\n): boolean {\n  const o1 = orientation(p1, q1, p2)\n  const o2 = orientation(p1, q1, q2)\n  const o3 = orientation(p2, q2, p1)\n  const o4 = orientation(p2, q2, q1)\n\n  // General case\n  if (o1 !== o2 && o3 !== o4) {\n    return true\n  }\n\n  // Special Cases\n  if (o1 === 0 && onSegment(p1, p2, q1)) return true\n  if (o2 === 0 && onSegment(p1, q2, q1)) return true\n  if (o3 === 0 && onSegment(p2, p1, q2)) return true\n  if (o4 === 0 && onSegment(p2, q1, q2)) return true\n\n  return false\n}\n\n/**\n * Relative tolerance used to decide that three points are colinear.\n *\n * The cross product below is a difference of two products of nearly equal\n * magnitude. For colinear (or nearly colinear) input the true value is zero\n * and the computed value is pure floating point cancellation dust whose\n * *sign* is meaningless. Trusting that sign makes `doSegmentsIntersect`\n * report disjoint colinear segments as intersecting, which in turn makes\n * `segmentToSegmentMinDistance` (and every clearance check built on it)\n * return 0 for segments that are nowhere near each other.\n *\n * 1e-12 sits ~4 orders of magnitude above the worst case cancellation error\n * of IEEE-754 doubles (~2.2e-16 relative) and far below any geometrically\n * meaningful area, so genuine crossings are unaffected.\n */\nconst COLINEAR_RELATIVE_EPSILON = 1e-12\n\n/**\n * Returns 0 if the points are colinear, 1 if they are clockwise, and 2 if they are counterclockwise.\n */\nexport function orientation(p: Point, q: Point, r: Point): number {\n  const term1 = (q.y - p.y) * (r.x - q.x)\n  const term2 = (q.x - p.x) * (r.y - q.y)\n  const val = term1 - term2\n  const absTerm1 = Math.abs(term1)\n  const absTerm2 = Math.abs(term2)\n  const scale = absTerm1 > absTerm2 ? absTerm1 : absTerm2\n  if (Math.abs(val) <= COLINEAR_RELATIVE_EPSILON * scale) return 0 // colinear\n  return val > 0 ? 1 : 2 // clock or counterclock wise\n}\n\n/**\n * Returns true if q is on the segment p->r.\n */\nexport function onSegment(p: Point, q: Point, r: Point): boolean {\n  return (\n    q.x <= Math.max(p.x, r.x) &&\n    q.x >= Math.min(p.x, r.x) &&\n    q.y <= Math.max(p.y, r.y) &&\n    q.y >= Math.min(p.y, r.y)\n  )\n}\n\n/**\n * Returns the minimum distance between two segments.\n */\nfunction segmentsDistance(a1: Point, a2: Point, b1: Point, b2: Point): number {\n  // Handle degenerate cases: segments of zero length\n  if (a1.x === a2.x && a1.y === a2.y) {\n    return pointToSegmentDistance(a1, b1, b2)\n  }\n  if (b1.x === b2.x && b1.y === b2.y) {\n    return pointToSegmentDistance(b1, a1, a2)\n  }\n\n  // Check if segments intersect\n  if (doSegmentsIntersect(a1, a2, b1, b2)) {\n    return 0\n  }\n\n  // Compute the minimum distance between the segments\n  const distances = [\n    pointToSegmentDistance(a1, b1, b2),\n    pointToSegmentDistance(a2, b1, b2),\n    pointToSegmentDistance(b1, a1, a2),\n    pointToSegmentDistance(b2, a1, a2),\n  ]\n\n  return Math.min(...distances)\n}\n\n/**\n * Returns the minimum distance between a point and a segment.\n */\nexport function pointToSegmentDistance(p: Point, v: Point, w: Point): number {\n  const l2 = (w.x - v.x) ** 2 + (w.y - v.y) ** 2\n  if (l2 === 0) return distance(p, v)\n\n  let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2\n  t = Math.max(0, Math.min(1, t))\n\n  const projection = {\n    x: v.x + t * (w.x - v.x),\n    y: v.y + t * (w.y - v.y),\n  }\n\n  return distance(p, projection)\n}\n\n/**\n * Returns the distance between two points.\n */\nexport function distance(p1: Point, p2: Point): number {\n  const dx = p1.x - p2.x\n  const dy = p1.y - p2.y\n  return Math.sqrt(dx * dx + dy * dy)\n}\n\n/**\n * Calculates the intersection point of two line segments.\n * Returns the intersection point {x, y} if the segments intersect, otherwise returns null.\n */\nexport function getSegmentIntersection(\n  a: Point,\n  b: Point,\n  u: Point,\n  v: Point,\n): Point | null {\n  const dx1 = b.x - a.x\n  const dy1 = b.y - a.y\n  const dx2 = v.x - u.x\n  const dy2 = v.y - u.y\n  const dx3 = a.x - u.x\n  const dy3 = a.y - u.y\n\n  const denominator = dx1 * dy2 - dy1 * dx2\n\n  // Check if lines are parallel or collinear\n  if (Math.abs(denominator) < 1e-10) {\n    // Lines are parallel or collinear\n    // We could add checks for collinear overlapping segments if needed,\n    // but for now, we return null as a single intersection point doesn't exist.\n    // The doSegmentsIntersect function handles collinearity checks if only a boolean is needed.\n    return null\n  }\n\n  // Correct formula for t (parameter for segment ab)\n  // t = (dy3 * dx2 - dx3 * dy2) / denominator\n  // The formula previously used was -(dy3 * dx2 - dx3 * dy2) / denominator\n  const t = (dy3 * dx2 - dx3 * dy2) / denominator\n  // Correct formula for s (parameter for segment uv)\n  // s = (dx1 * dy3 - dy1 * dx3) / denominator\n  // The formula previously used was incorrect.\n  const s = (dx1 * dy3 - dy1 * dx3) / denominator\n\n  // Check if the intersection point lies within both segments\n  // Use a small epsilon for floating point comparisons near 0 and 1\n  const epsilon = 1e-9\n  if (t >= -epsilon && t <= 1 + epsilon && s >= -epsilon && s <= 1 + epsilon) {\n    const intersectionX = a.x + t * dx1\n    const intersectionY = a.y + t * dy1\n    return { x: intersectionX, y: intersectionY }\n  }\n\n  // Segments do not intersect within their bounds\n  return null\n}\n\nexport function doesSegmentIntersectRect(\n  a: Point,\n  b: Point,\n  rect: { minX: number; minY: number; maxX: number; maxY: number },\n): boolean {\n  const pointInside = (p: Point) =>\n    p.x >= rect.minX && p.x <= rect.maxX && p.y >= rect.minY && p.y <= rect.maxY\n\n  if (pointInside(a) || pointInside(b)) {\n    return true\n  }\n\n  const topLeft = { x: rect.minX, y: rect.minY }\n  const topRight = { x: rect.maxX, y: rect.minY }\n  const bottomLeft = { x: rect.minX, y: rect.maxY }\n  const bottomRight = { x: rect.maxX, y: rect.maxY }\n\n  return (\n    doSegmentsIntersect(a, b, topLeft, topRight) ||\n    doSegmentsIntersect(a, b, topRight, bottomRight) ||\n    doSegmentsIntersect(a, b, bottomRight, bottomLeft) ||\n    doSegmentsIntersect(a, b, bottomLeft, topLeft)\n  )\n}\n"],"mappings":"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","names":[]}
+\ No newline at end of file
+diff --git a/dist/chunk-K4Y4TLE3.js b/dist/chunk-K4Y4TLE3.js
+new file mode 100644
+index 0000000..3369be1
+--- /dev/null
++++ b/dist/chunk-K4Y4TLE3.js
+@@ -0,0 +1,137 @@
++import {
++  distance,
++  doSegmentsIntersect,
++  pointToSegmentDistance
++} from "./chunk-PUVNW6C2.js";
++import {
++  clamp
++} from "./chunk-DRDDWFOS.js";
++
++// src/segment-distance.ts
++var TOUCHING_GAP_SQ = 1e-18;
++function segmentToSegmentMinDistance(a, b, u, v) {
++  if (a.x === b.x && a.y === b.y) {
++    return pointToSegmentDistance(a, u, v);
++  }
++  if (u.x === v.x && u.y === v.y) {
++    return pointToSegmentDistance(u, a, b);
++  }
++  const d1x = b.x - a.x;
++  const d1y = b.y - a.y;
++  const d2x = v.x - u.x;
++  const d2y = v.y - u.y;
++  const rx = a.x - u.x;
++  const ry = a.y - u.y;
++  const segment1LengthSq = d1x * d1x + d1y * d1y;
++  const segment2LengthSq = d2x * d2x + d2y * d2y;
++  const f = d2x * rx + d2y * ry;
++  const c = d1x * rx + d1y * ry;
++  const dot12 = d1x * d2x + d1y * d2y;
++  let s;
++  let t;
++  const denom = segment1LengthSq * segment2LengthSq - dot12 * dot12;
++  if (denom !== 0) {
++    s = clamp((dot12 * f - c * segment2LengthSq) / denom, 0, 1);
++  } else {
++    s = 0;
++  }
++  t = (dot12 * s + f) / segment2LengthSq;
++  if (t < 0) {
++    t = 0;
++    s = clamp(-c / segment1LengthSq, 0, 1);
++  } else if (t > 1) {
++    t = 1;
++    s = clamp((dot12 - c) / segment1LengthSq, 0, 1);
++  }
++  const dx = a.x + d1x * s - (u.x + d2x * t);
++  const dy = a.y + d1y * s - (u.y + d2y * t);
++  const gapSq = dx * dx + dy * dy;
++  if (gapSq <= TOUCHING_GAP_SQ) {
++    return doSegmentsIntersect(a, b, u, v) ? 0 : Math.sqrt(gapSq);
++  }
++  return Math.sqrt(gapSq);
++}
++function segmentToBoundsMinDistance(a, b, bounds) {
++  const topLeft = { x: bounds.minX, y: bounds.minY };
++  const topRight = { x: bounds.maxX, y: bounds.minY };
++  const bottomLeft = { x: bounds.minX, y: bounds.maxY };
++  const bottomRight = { x: bounds.maxX, y: bounds.maxY };
++  if (doSegmentsIntersect(a, b, topLeft, topRight) || doSegmentsIntersect(a, b, topRight, bottomRight) || doSegmentsIntersect(a, b, bottomRight, bottomLeft) || doSegmentsIntersect(a, b, bottomLeft, topLeft)) {
++    return 0;
++  }
++  if (a.x >= bounds.minX && a.x <= bounds.maxX && a.y >= bounds.minY && a.y <= bounds.maxY && b.x >= bounds.minX && b.x <= bounds.maxX && b.y >= bounds.minY && b.y <= bounds.maxY) {
++    return 0;
++  }
++  const distances = [
++    pointToSegmentDistance(topLeft, a, b),
++    pointToSegmentDistance(topRight, a, b),
++    pointToSegmentDistance(bottomLeft, a, b),
++    pointToSegmentDistance(bottomRight, a, b)
++  ];
++  if (a.x >= bounds.minX && a.x <= bounds.maxX && a.y >= bounds.minY && a.y <= bounds.maxY) {
++    return 0;
++  }
++  if (b.x >= bounds.minX && b.x <= bounds.maxX && b.y >= bounds.minY && b.y <= bounds.maxY) {
++    return 0;
++  }
++  if (a.x < bounds.minX || a.x > bounds.maxX || a.y < bounds.minY || a.y > bounds.maxY) {
++    const closestX = clamp(a.x, bounds.minX, bounds.maxX);
++    const closestY = clamp(a.y, bounds.minY, bounds.maxY);
++    distances.push(distance(a, { x: closestX, y: closestY }));
++  }
++  if (b.x < bounds.minX || b.x > bounds.maxX || b.y < bounds.minY || b.y > bounds.maxY) {
++    const closestX = clamp(b.x, bounds.minX, bounds.maxX);
++    const closestY = clamp(b.y, bounds.minY, bounds.maxY);
++    distances.push(distance(b, { x: closestX, y: closestY }));
++  }
++  return Math.min(...distances);
++}
++function segmentToBoxMinDistance(a, b, box) {
++  const halfWidth = box.width / 2;
++  const halfHeight = box.height / 2;
++  const bounds = {
++    minX: box.center.x - halfWidth,
++    maxX: box.center.x + halfWidth,
++    minY: box.center.y - halfHeight,
++    maxY: box.center.y + halfHeight
++  };
++  return segmentToBoundsMinDistance(a, b, bounds);
++}
++function segmentToCircleMinDistance(a, b, circle) {
++  const circleCenter = { x: circle.x, y: circle.y };
++  if (a.x === b.x && a.y === b.y) {
++    return Math.max(0, distance(a, circleCenter) - circle.radius);
++  }
++  const ab = { x: b.x - a.x, y: b.y - a.y };
++  const ac = { x: circleCenter.x - a.x, y: circleCenter.y - a.y };
++  const abLengthSq = ab.x * ab.x + ab.y * ab.y;
++  const t = Math.max(0, Math.min(1, (ab.x * ac.x + ab.y * ac.y) / abLengthSq));
++  const closestPoint = {
++    x: a.x + t * ab.x,
++    y: a.y + t * ab.y
++  };
++  const distToCenter = distance(closestPoint, circleCenter);
++  return Math.max(0, distToCenter - circle.radius);
++}
++function pointToSegmentClosestPoint(p, a, b) {
++  const dx_ab = b.x - a.x;
++  const dy_ab = b.y - a.y;
++  const l2 = dx_ab * dx_ab + dy_ab * dy_ab;
++  if (l2 === 0) return { x: a.x, y: a.y };
++  let t = ((p.x - a.x) * dx_ab + (p.y - a.y) * dy_ab) / l2;
++  t = Math.max(0, Math.min(1, t));
++  const closestPoint = {
++    x: a.x + t * dx_ab,
++    y: a.y + t * dy_ab
++  };
++  return closestPoint;
++}
++
++export {
++  segmentToSegmentMinDistance,
++  segmentToBoundsMinDistance,
++  segmentToBoxMinDistance,
++  segmentToCircleMinDistance,
++  pointToSegmentClosestPoint
++};
++//# sourceMappingURL=chunk-K4Y4TLE3.js.map
+\ No newline at end of file
+diff --git a/dist/chunk-K4Y4TLE3.js.map b/dist/chunk-K4Y4TLE3.js.map
+new file mode 100644
+index 0000000..7fa8f03
+--- /dev/null
++++ b/dist/chunk-K4Y4TLE3.js.map
+@@ -0,0 +1 @@
++{"version":3,"sources":["../src/segment-distance.ts"],"sourcesContent":["import type { Point } from \"./common\"\nimport {\n  distance,\n  doSegmentsIntersect,\n  pointToSegmentDistance,\n} from \"./line-intersections\"\nimport { clamp } from \"./nearest-box\"\n\n/**\n * Squared gap below which two segments are treated as possibly touching, so\n * the exact intersection predicate decides whether the distance is exactly 0.\n * (1e-9mm)^2 - far below any PCB feature size.\n */\nconst TOUCHING_GAP_SQ = 1e-18\n\n/**\n * Returns the minimum distance between two line segments.\n */\nexport function segmentToSegmentMinDistance(\n  a: Point,\n  b: Point,\n  u: Point,\n  v: Point,\n): number {\n  // Handle degenerate cases: segments of zero length\n  if (a.x === b.x && a.y === b.y) {\n    return pointToSegmentDistance(a, u, v)\n  }\n  if (u.x === v.x && u.y === v.y) {\n    return pointToSegmentDistance(u, a, b)\n  }\n\n  // Closest points between two segments by clamped parametric solve\n  // (Ericson, Real-Time Collision Detection 5.1.9). One sqrt and no\n  // intersection predicate, versus four point-to-segment distances (four\n  // sqrts) plus four orientation tests in the previous formulation.\n  const d1x = b.x - a.x\n  const d1y = b.y - a.y\n  const d2x = v.x - u.x\n  const d2y = v.y - u.y\n  const rx = a.x - u.x\n  const ry = a.y - u.y\n\n  const segment1LengthSq = d1x * d1x + d1y * d1y\n  const segment2LengthSq = d2x * d2x + d2y * d2y\n  const f = d2x * rx + d2y * ry\n  const c = d1x * rx + d1y * ry\n  const dot12 = d1x * d2x + d1y * d2y\n\n  let s: number\n  let t: number\n  const denom = segment1LengthSq * segment2LengthSq - dot12 * dot12\n  if (denom !== 0) {\n    s = clamp((dot12 * f - c * segment2LengthSq) / denom, 0, 1)\n  } else {\n    // parallel or colinear: any point on segment 1 is as good a starting guess\n    s = 0\n  }\n\n  t = (dot12 * s + f) / segment2LengthSq\n  if (t < 0) {\n    t = 0\n    s = clamp(-c / segment1LengthSq, 0, 1)\n  } else if (t > 1) {\n    t = 1\n    s = clamp((dot12 - c) / segment1LengthSq, 0, 1)\n  }\n\n  const dx = a.x + d1x * s - (u.x + d2x * t)\n  const dy = a.y + d1y * s - (u.y + d2y * t)\n  const gapSq = dx * dx + dy * dy\n\n  // Preserve the exact-zero contract for genuinely intersecting segments:\n  // the parametric solve lands within rounding dust of zero there, and\n  // callers may compare against 0. The predicate only runs in that rare case.\n  if (gapSq <= TOUCHING_GAP_SQ) {\n    return doSegmentsIntersect(a, b, u, v) ? 0 : Math.sqrt(gapSq)\n  }\n\n  return Math.sqrt(gapSq)\n}\n\n/**\n * Returns the minimum distance from a line segment to a bounding box.\n */\nexport function segmentToBoundsMinDistance(\n  a: Point,\n  b: Point,\n  bounds: { minX: number; minY: number; maxX: number; maxY: number },\n): number {\n  // Check if segment intersects with the bounds\n  // Create the four edges of the bounds\n  const topLeft = { x: bounds.minX, y: bounds.minY }\n  const topRight = { x: bounds.maxX, y: bounds.minY }\n  const bottomLeft = { x: bounds.minX, y: bounds.maxY }\n  const bottomRight = { x: bounds.maxX, y: bounds.maxY }\n\n  // Check if segment intersects with any of the bounds edges\n  if (\n    doSegmentsIntersect(a, b, topLeft, topRight) ||\n    doSegmentsIntersect(a, b, topRight, bottomRight) ||\n    doSegmentsIntersect(a, b, bottomRight, bottomLeft) ||\n    doSegmentsIntersect(a, b, bottomLeft, topLeft)\n  ) {\n    return 0\n  }\n\n  // Check if segment is entirely inside the bounds\n  if (\n    a.x >= bounds.minX &&\n    a.x <= bounds.maxX &&\n    a.y >= bounds.minY &&\n    a.y <= bounds.maxY &&\n    b.x >= bounds.minX &&\n    b.x <= bounds.maxX &&\n    b.y >= bounds.minY &&\n    b.y <= bounds.maxY\n  ) {\n    return 0\n  }\n\n  // If not intersecting, calculate the minimum distance\n  const distances = [\n    pointToSegmentDistance(topLeft, a, b),\n    pointToSegmentDistance(topRight, a, b),\n    pointToSegmentDistance(bottomLeft, a, b),\n    pointToSegmentDistance(bottomRight, a, b),\n  ]\n\n  // If one of the segment endpoints is inside the bounds, we need to consider its distance to the bounds as 0\n  if (\n    a.x >= bounds.minX &&\n    a.x <= bounds.maxX &&\n    a.y >= bounds.minY &&\n    a.y <= bounds.maxY\n  ) {\n    return 0\n  }\n\n  if (\n    b.x >= bounds.minX &&\n    b.x <= bounds.maxX &&\n    b.y >= bounds.minY &&\n    b.y <= bounds.maxY\n  ) {\n    return 0\n  }\n\n  // Calculate distances from segment endpoints to bounds if outside\n  if (\n    a.x < bounds.minX ||\n    a.x > bounds.maxX ||\n    a.y < bounds.minY ||\n    a.y > bounds.maxY\n  ) {\n    const closestX = clamp(a.x, bounds.minX, bounds.maxX)\n    const closestY = clamp(a.y, bounds.minY, bounds.maxY)\n    distances.push(distance(a, { x: closestX, y: closestY }))\n  }\n\n  if (\n    b.x < bounds.minX ||\n    b.x > bounds.maxX ||\n    b.y < bounds.minY ||\n    b.y > bounds.maxY\n  ) {\n    const closestX = clamp(b.x, bounds.minX, bounds.maxX)\n    const closestY = clamp(b.y, bounds.minY, bounds.maxY)\n    distances.push(distance(b, { x: closestX, y: closestY }))\n  }\n\n  return Math.min(...distances)\n}\n\n/**\n * Returns the minimum distance from a line segment to a box.\n */\nexport function segmentToBoxMinDistance(\n  a: Point,\n  b: Point,\n  box: { center: Point; width: number; height: number },\n): number {\n  const halfWidth = box.width / 2\n  const halfHeight = box.height / 2\n  const bounds = {\n    minX: box.center.x - halfWidth,\n    maxX: box.center.x + halfWidth,\n    minY: box.center.y - halfHeight,\n    maxY: box.center.y + halfHeight,\n  }\n\n  return segmentToBoundsMinDistance(a, b, bounds)\n}\n\n/**\n * Returns the minimum distance from a line segment to a circle.\n */\nexport function segmentToCircleMinDistance(\n  a: Point,\n  b: Point,\n  circle: { x: number; y: number; radius: number },\n): number {\n  // Calculate the distance from the circle center to the line segment\n  const circleCenter = { x: circle.x, y: circle.y }\n\n  // Handle degenerate case: segment of zero length (point to circle)\n  if (a.x === b.x && a.y === b.y) {\n    return Math.max(0, distance(a, circleCenter) - circle.radius)\n  }\n\n  // Vector from a to b\n  const ab = { x: b.x - a.x, y: b.y - a.y }\n  // Vector from a to circle center\n  const ac = { x: circleCenter.x - a.x, y: circleCenter.y - a.y }\n\n  // Length of segment ab squared\n  const abLengthSq = ab.x * ab.x + ab.y * ab.y\n\n  // Calculate projection of ac onto ab, normalized by the length of ab\n  const t = Math.max(0, Math.min(1, (ab.x * ac.x + ab.y * ac.y) / abLengthSq))\n\n  // Find the closest point on the segment to the circle center\n  const closestPoint = {\n    x: a.x + t * ab.x,\n    y: a.y + t * ab.y,\n  }\n\n  // Calculate distance from closest point to circle center\n  const distToCenter = distance(closestPoint, circleCenter)\n\n  // Return the distance to the circle (subtract radius from distance to center)\n  return Math.max(0, distToCenter - circle.radius)\n}\n\nexport function pointToSegmentClosestPoint(\n  p: Point,\n  a: Point,\n  b: Point,\n): Point {\n  const dx_ab = b.x - a.x\n  const dy_ab = b.y - a.y\n  const l2 = dx_ab * dx_ab + dy_ab * dy_ab\n\n  if (l2 === 0) return { x: a.x, y: a.y } // Segment is a point\n\n  // Project p onto the line defined by a, b\n  // t = [(p - a) . (b - a)] / |b - a|^2\n  let t = ((p.x - a.x) * dx_ab + (p.y - a.y) * dy_ab) / l2\n\n  // Clamp t to the range [0, 1] to stay on the segment\n  t = Math.max(0, Math.min(1, t))\n\n  // Calculate the projection point\n  const closestPoint = {\n    x: a.x + t * dx_ab,\n    y: a.y + t * dy_ab,\n  }\n\n  return closestPoint\n}\n"],"mappings":"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","names":[]}
+\ No newline at end of file
+diff --git a/dist/chunk-Y7G4VXR7.js b/dist/chunk-MSFDIXAF.js
+similarity index 98%
+rename from dist/chunk-Y7G4VXR7.js
+rename to dist/chunk-MSFDIXAF.js
+index 329371c..b171b0f 100644
+--- a/dist/chunk-Y7G4VXR7.js
++++ b/dist/chunk-MSFDIXAF.js
+@@ -2,7 +2,7 @@ import {
+   distance,
+   doSegmentsIntersect,
+   pointToSegmentDistance
+-} from "./chunk-EFLPMB4J.js";
++} from "./chunk-I6J47HDD.js";
+ import {
+   clamp
+ } from "./chunk-DRDDWFOS.js";
+@@ -109,4 +109,4 @@ export {
+   segmentToCircleMinDistance,
+   pointToSegmentClosestPoint
+ };
+-//# sourceMappingURL=chunk-Y7G4VXR7.js.map
+\ No newline at end of file
++//# sourceMappingURL=chunk-MSFDIXAF.js.map
+\ No newline at end of file
+diff --git a/dist/chunk-Y7G4VXR7.js.map b/dist/chunk-MSFDIXAF.js.map
+similarity index 100%
+rename from dist/chunk-Y7G4VXR7.js.map
+rename to dist/chunk-MSFDIXAF.js.map
+diff --git a/dist/chunk-NCRH2RG3.js b/dist/chunk-NCRH2RG3.js
+new file mode 100644
+index 0000000..b847f58
+--- /dev/null
++++ b/dist/chunk-NCRH2RG3.js
+@@ -0,0 +1,120 @@
++import {
++  doSegmentsIntersect
++} from "./chunk-PUVNW6C2.js";
++
++// src/polygon.ts
++var universalRectToBounds = (rect) => {
++  if ("minX" in rect) {
++    return rect;
++  }
++  const halfWidth = rect.width / 2;
++  const halfHeight = rect.height / 2;
++  return {
++    minX: rect.center.x - halfWidth,
++    minY: rect.center.y - halfHeight,
++    maxX: rect.center.x + halfWidth,
++    maxY: rect.center.y + halfHeight
++  };
++};
++var getBoundsCorners = (bounds) => [
++  { x: bounds.minX, y: bounds.minY },
++  { x: bounds.maxX, y: bounds.minY },
++  { x: bounds.maxX, y: bounds.maxY },
++  { x: bounds.minX, y: bounds.maxY }
++];
++var getPolygonEdges = (polygon) => {
++  const edges = [];
++  for (let i = 0; i < polygon.length; i++) {
++    const start = polygon[i];
++    const end = polygon[(i + 1) % polygon.length];
++    edges.push([start, end]);
++  }
++  return edges;
++};
++var isPointOnSegment = (point, start, end) => {
++  const cross = (point.y - start.y) * (end.x - start.x) - (point.x - start.x) * (end.y - start.y);
++  if (Math.abs(cross) > 1e-9) {
++    return false;
++  }
++  const dot = (point.x - start.x) * (end.x - start.x) + (point.y - start.y) * (end.y - start.y);
++  if (dot < 0) {
++    return false;
++  }
++  const squaredLength = (end.x - start.x) ** 2 + (end.y - start.y) ** 2;
++  if (squaredLength === 0) return false;
++  if (dot > squaredLength) {
++    return false;
++  }
++  return true;
++};
++var isPointInsideBounds = (point, bounds) => point.x >= bounds.minX && point.x <= bounds.maxX && point.y >= bounds.minY && point.y <= bounds.maxY;
++var isPointInsidePolygon = (point, polygon) => {
++  if (polygon.length < 3) return false;
++  const edges = getPolygonEdges(polygon);
++  for (const [start, end] of edges) {
++    if (isPointOnSegment(point, start, end)) {
++      return true;
++    }
++  }
++  let inside = false;
++  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
++    const xi = polygon[i].x;
++    const yi = polygon[i].y;
++    const xj = polygon[j].x;
++    const yj = polygon[j].y;
++    const intersects = yi > point.y !== yj > point.y && point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi;
++    if (intersects) {
++      inside = !inside;
++    }
++  }
++  return inside;
++};
++var doesPolygonIntersectBounds = (bounds, polygon) => {
++  const boundsCorners = getBoundsCorners(bounds);
++  const boundsEdges = [
++    [boundsCorners[0], boundsCorners[1]],
++    [boundsCorners[1], boundsCorners[2]],
++    [boundsCorners[2], boundsCorners[3]],
++    [boundsCorners[3], boundsCorners[0]]
++  ];
++  const polygonEdges = getPolygonEdges(polygon);
++  for (const [start, end] of polygonEdges) {
++    for (const [rectStart, rectEnd] of boundsEdges) {
++      if (doSegmentsIntersect(start, end, rectStart, rectEnd)) {
++        return true;
++      }
++    }
++  }
++  return false;
++};
++var areBoundsOverlappingPolygon = (bounds, polygon) => {
++  if (polygon.length < 3) return false;
++  if (polygon.some((point) => isPointInsideBounds(point, bounds))) {
++    return true;
++  }
++  const corners = getBoundsCorners(bounds);
++  if (corners.some((corner) => isPointInsidePolygon(corner, polygon))) {
++    return true;
++  }
++  return doesPolygonIntersectBounds(bounds, polygon);
++};
++var areBoundsCompletelyInsidePolygon = (bounds, polygon) => {
++  if (polygon.length < 3) return false;
++  const corners = getBoundsCorners(bounds);
++  if (!corners.every((corner) => isPointInsidePolygon(corner, polygon))) {
++    return false;
++  }
++  return !doesPolygonIntersectBounds(bounds, polygon);
++};
++var isRectOverlappingPolygon = (rect, polygon) => areBoundsOverlappingPolygon(universalRectToBounds(rect), polygon);
++var isRectCompletelyInsidePolygon = (rect, polygon) => areBoundsCompletelyInsidePolygon(universalRectToBounds(rect), polygon);
++
++export {
++  isPointInsideBounds,
++  isPointInsidePolygon,
++  areBoundsOverlappingPolygon,
++  areBoundsCompletelyInsidePolygon,
++  isRectOverlappingPolygon,
++  isRectCompletelyInsidePolygon
++};
++//# sourceMappingURL=chunk-NCRH2RG3.js.map
+\ No newline at end of file
+diff --git a/dist/chunk-NCRH2RG3.js.map b/dist/chunk-NCRH2RG3.js.map
+new file mode 100644
+index 0000000..4c75e75
+--- /dev/null
++++ b/dist/chunk-NCRH2RG3.js.map
+@@ -0,0 +1 @@
++{"version":3,"sources":["../src/polygon.ts"],"sourcesContent":["import type { Bounds, Point, UniversalRect } from \"./common\"\nimport { doSegmentsIntersect } from \"./line-intersections\"\n\nexport type Polygon = readonly Point[]\n\nconst universalRectToBounds = (rect: UniversalRect): Bounds => {\n  if (\"minX\" in rect) {\n    return rect\n  }\n\n  const halfWidth = rect.width / 2\n  const halfHeight = rect.height / 2\n\n  return {\n    minX: rect.center.x - halfWidth,\n    minY: rect.center.y - halfHeight,\n    maxX: rect.center.x + halfWidth,\n    maxY: rect.center.y + halfHeight,\n  }\n}\n\nconst getBoundsCorners = (bounds: Bounds): Point[] => [\n  { x: bounds.minX, y: bounds.minY },\n  { x: bounds.maxX, y: bounds.minY },\n  { x: bounds.maxX, y: bounds.maxY },\n  { x: bounds.minX, y: bounds.maxY },\n]\n\nconst getPolygonEdges = (polygon: Polygon): Array<[Point, Point]> => {\n  const edges: Array<[Point, Point]> = []\n  for (let i = 0; i < polygon.length; i++) {\n    const start = polygon[i]\n    const end = polygon[(i + 1) % polygon.length]\n    edges.push([start, end])\n  }\n  return edges\n}\n\nconst isPointOnSegment = (point: Point, start: Point, end: Point): boolean => {\n  const cross =\n    (point.y - start.y) * (end.x - start.x) -\n    (point.x - start.x) * (end.y - start.y)\n  if (Math.abs(cross) > 1e-9) {\n    return false\n  }\n\n  const dot =\n    (point.x - start.x) * (end.x - start.x) +\n    (point.y - start.y) * (end.y - start.y)\n  if (dot < 0) {\n    return false\n  }\n\n  const squaredLength = (end.x - start.x) ** 2 + (end.y - start.y) ** 2\n  if (squaredLength === 0) return false\n  if (dot > squaredLength) {\n    return false\n  }\n\n  return true\n}\n\nexport const isPointInsideBounds = (point: Point, bounds: Bounds): boolean =>\n  point.x >= bounds.minX &&\n  point.x <= bounds.maxX &&\n  point.y >= bounds.minY &&\n  point.y <= bounds.maxY\n\nexport const isPointInsidePolygon = (\n  point: Point,\n  polygon: Polygon,\n): boolean => {\n  if (polygon.length < 3) return false\n\n  const edges = getPolygonEdges(polygon)\n  for (const [start, end] of edges) {\n    if (isPointOnSegment(point, start, end)) {\n      return true\n    }\n  }\n\n  let inside = false\n  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {\n    const xi = polygon[i].x\n    const yi = polygon[i].y\n    const xj = polygon[j].x\n    const yj = polygon[j].y\n\n    const intersects =\n      yi > point.y !== yj > point.y &&\n      point.x < ((xj - xi) * (point.y - yi)) / (yj - yi) + xi\n\n    if (intersects) {\n      inside = !inside\n    }\n  }\n\n  return inside\n}\n\nconst doesPolygonIntersectBounds = (\n  bounds: Bounds,\n  polygon: Polygon,\n): boolean => {\n  const boundsCorners = getBoundsCorners(bounds)\n  const boundsEdges: Array<[Point, Point]> = [\n    [boundsCorners[0], boundsCorners[1]],\n    [boundsCorners[1], boundsCorners[2]],\n    [boundsCorners[2], boundsCorners[3]],\n    [boundsCorners[3], boundsCorners[0]],\n  ]\n\n  const polygonEdges = getPolygonEdges(polygon)\n\n  for (const [start, end] of polygonEdges) {\n    for (const [rectStart, rectEnd] of boundsEdges) {\n      if (doSegmentsIntersect(start, end, rectStart, rectEnd)) {\n        return true\n      }\n    }\n  }\n\n  return false\n}\n\nexport const areBoundsOverlappingPolygon = (\n  bounds: Bounds,\n  polygon: Polygon,\n): boolean => {\n  if (polygon.length < 3) return false\n\n  if (polygon.some((point) => isPointInsideBounds(point, bounds))) {\n    return true\n  }\n\n  const corners = getBoundsCorners(bounds)\n  if (corners.some((corner) => isPointInsidePolygon(corner, polygon))) {\n    return true\n  }\n\n  return doesPolygonIntersectBounds(bounds, polygon)\n}\n\nexport const areBoundsCompletelyInsidePolygon = (\n  bounds: Bounds,\n  polygon: Polygon,\n): boolean => {\n  if (polygon.length < 3) return false\n\n  const corners = getBoundsCorners(bounds)\n  if (!corners.every((corner) => isPointInsidePolygon(corner, polygon))) {\n    return false\n  }\n\n  return !doesPolygonIntersectBounds(bounds, polygon)\n}\n\nexport const isRectOverlappingPolygon = (\n  rect: UniversalRect,\n  polygon: Polygon,\n): boolean => areBoundsOverlappingPolygon(universalRectToBounds(rect), polygon)\n\nexport const isRectCompletelyInsidePolygon = (\n  rect: UniversalRect,\n  polygon: Polygon,\n): boolean =>\n  areBoundsCompletelyInsidePolygon(universalRectToBounds(rect), polygon)\n"],"mappings":"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","names":[]}
+\ No newline at end of file
+diff --git a/dist/chunk-PUVNW6C2.js b/dist/chunk-PUVNW6C2.js
+new file mode 100644
+index 0000000..979fe30
+--- /dev/null
++++ b/dist/chunk-PUVNW6C2.js
+@@ -0,0 +1,119 @@
++// src/line-intersections.ts
++function doesLineIntersectLine([a1, a2], [b1, b2], {
++  lineThickness = 0
++} = {}) {
++  if (lineThickness === 0) {
++    return doSegmentsIntersect(a1, a2, b1, b2);
++  }
++  const minDist = segmentsDistance(a1, a2, b1, b2);
++  return minDist <= lineThickness;
++}
++function doSegmentsIntersect(p1, q1, p2, q2) {
++  const o1 = orientation(p1, q1, p2);
++  const o2 = orientation(p1, q1, q2);
++  const o3 = orientation(p2, q2, p1);
++  const o4 = orientation(p2, q2, q1);
++  if (o1 !== o2 && o3 !== o4) {
++    return true;
++  }
++  if (o1 === 0 && onSegment(p1, p2, q1)) return true;
++  if (o2 === 0 && onSegment(p1, q2, q1)) return true;
++  if (o3 === 0 && onSegment(p2, p1, q2)) return true;
++  if (o4 === 0 && onSegment(p2, q1, q2)) return true;
++  return false;
++}
++var COLINEAR_RELATIVE_EPSILON = 1e-12;
++function orientation(p, q, r) {
++  const term1 = (q.y - p.y) * (r.x - q.x);
++  const term2 = (q.x - p.x) * (r.y - q.y);
++  const val = term1 - term2;
++  const absTerm1 = Math.abs(term1);
++  const absTerm2 = Math.abs(term2);
++  const scale = absTerm1 > absTerm2 ? absTerm1 : absTerm2;
++  if (Math.abs(val) <= COLINEAR_RELATIVE_EPSILON * scale) return 0;
++  return val > 0 ? 1 : 2;
++}
++function onSegment(p, q, r) {
++  return q.x <= Math.max(p.x, r.x) && q.x >= Math.min(p.x, r.x) && q.y <= Math.max(p.y, r.y) && q.y >= Math.min(p.y, r.y);
++}
++function segmentsDistance(a1, a2, b1, b2) {
++  if (a1.x === a2.x && a1.y === a2.y) {
++    return pointToSegmentDistance(a1, b1, b2);
++  }
++  if (b1.x === b2.x && b1.y === b2.y) {
++    return pointToSegmentDistance(b1, a1, a2);
++  }
++  if (doSegmentsIntersect(a1, a2, b1, b2)) {
++    return 0;
++  }
++  return Math.min(
++    Math.min(
++      pointToSegmentDistance(a1, b1, b2),
++      pointToSegmentDistance(a2, b1, b2)
++    ),
++    Math.min(
++      pointToSegmentDistance(b1, a1, a2),
++      pointToSegmentDistance(b2, a1, a2)
++    )
++  );
++}
++function pointToSegmentDistance(p, v, w) {
++  const wx = w.x - v.x;
++  const wy = w.y - v.y;
++  const l2 = wx ** 2 + wy ** 2;
++  if (l2 === 0) return distance(p, v);
++  let t = ((p.x - v.x) * wx + (p.y - v.y) * wy) / l2;
++  t = Math.max(0, Math.min(1, t));
++  const dx = p.x - (v.x + t * wx);
++  const dy = p.y - (v.y + t * wy);
++  return Math.sqrt(dx * dx + dy * dy);
++}
++function distance(p1, p2) {
++  const dx = p1.x - p2.x;
++  const dy = p1.y - p2.y;
++  return Math.sqrt(dx * dx + dy * dy);
++}
++function getSegmentIntersection(a, b, u, v) {
++  const dx1 = b.x - a.x;
++  const dy1 = b.y - a.y;
++  const dx2 = v.x - u.x;
++  const dy2 = v.y - u.y;
++  const dx3 = a.x - u.x;
++  const dy3 = a.y - u.y;
++  const denominator = dx1 * dy2 - dy1 * dx2;
++  if (Math.abs(denominator) < 1e-10) {
++    return null;
++  }
++  const t = (dy3 * dx2 - dx3 * dy2) / denominator;
++  const s = (dx1 * dy3 - dy1 * dx3) / denominator;
++  const epsilon = 1e-9;
++  if (t >= -epsilon && t <= 1 + epsilon && s >= -epsilon && s <= 1 + epsilon) {
++    const intersectionX = a.x + t * dx1;
++    const intersectionY = a.y + t * dy1;
++    return { x: intersectionX, y: intersectionY };
++  }
++  return null;
++}
++function doesSegmentIntersectRect(a, b, rect) {
++  const pointInside = (p) => p.x >= rect.minX && p.x <= rect.maxX && p.y >= rect.minY && p.y <= rect.maxY;
++  if (pointInside(a) || pointInside(b)) {
++    return true;
++  }
++  const topLeft = { x: rect.minX, y: rect.minY };
++  const topRight = { x: rect.maxX, y: rect.minY };
++  const bottomLeft = { x: rect.minX, y: rect.maxY };
++  const bottomRight = { x: rect.maxX, y: rect.maxY };
++  return doSegmentsIntersect(a, b, topLeft, topRight) || doSegmentsIntersect(a, b, topRight, bottomRight) || doSegmentsIntersect(a, b, bottomRight, bottomLeft) || doSegmentsIntersect(a, b, bottomLeft, topLeft);
++}
++
++export {
++  doesLineIntersectLine,
++  doSegmentsIntersect,
++  orientation,
++  onSegment,
++  pointToSegmentDistance,
++  distance,
++  getSegmentIntersection,
++  doesSegmentIntersectRect
++};
++//# sourceMappingURL=chunk-PUVNW6C2.js.map
+\ No newline at end of file
+diff --git a/dist/chunk-PUVNW6C2.js.map b/dist/chunk-PUVNW6C2.js.map
+new file mode 100644
+index 0000000..8be6de1
+--- /dev/null
++++ b/dist/chunk-PUVNW6C2.js.map
+@@ -0,0 +1 @@
++{"version":3,"sources":["../src/line-intersections.ts"],"sourcesContent":["import type { Point } from \"./common\"\n\n/**\n * Returns true if the two lines intersect.\n */\nexport function doesLineIntersectLine(\n  [a1, a2]: [Point, Point],\n  [b1, b2]: [Point, Point],\n  {\n    lineThickness = 0,\n  }: {\n    lineThickness?: number\n  } = {},\n): boolean {\n  if (lineThickness === 0) {\n    return doSegmentsIntersect(a1, a2, b1, b2)\n  }\n  const minDist = segmentsDistance(a1, a2, b1, b2)\n  return minDist <= lineThickness\n}\n\n/**\n * Returns true if the two segments intersect.\n */\nexport function doSegmentsIntersect(\n  p1: Point,\n  q1: Point,\n  p2: Point,\n  q2: Point,\n): boolean {\n  const o1 = orientation(p1, q1, p2)\n  const o2 = orientation(p1, q1, q2)\n  const o3 = orientation(p2, q2, p1)\n  const o4 = orientation(p2, q2, q1)\n\n  // General case\n  if (o1 !== o2 && o3 !== o4) {\n    return true\n  }\n\n  // Special Cases\n  if (o1 === 0 && onSegment(p1, p2, q1)) return true\n  if (o2 === 0 && onSegment(p1, q2, q1)) return true\n  if (o3 === 0 && onSegment(p2, p1, q2)) return true\n  if (o4 === 0 && onSegment(p2, q1, q2)) return true\n\n  return false\n}\n\n/**\n * Relative tolerance used to decide that three points are colinear.\n *\n * The cross product below is a difference of two products of nearly equal\n * magnitude. For colinear (or nearly colinear) input the true value is zero\n * and the computed value is pure floating point cancellation dust whose\n * *sign* is meaningless. Trusting that sign makes `doSegmentsIntersect`\n * report disjoint colinear segments as intersecting, which in turn makes\n * `segmentToSegmentMinDistance` (and every clearance check built on it)\n * return 0 for segments that are nowhere near each other.\n *\n * 1e-12 sits ~4 orders of magnitude above the worst case cancellation error\n * of IEEE-754 doubles (~2.2e-16 relative) and far below any geometrically\n * meaningful area, so genuine crossings are unaffected.\n */\nconst COLINEAR_RELATIVE_EPSILON = 1e-12\n\n/**\n * Returns 0 if the points are colinear, 1 if they are clockwise, and 2 if they are counterclockwise.\n */\nexport function orientation(p: Point, q: Point, r: Point): number {\n  const term1 = (q.y - p.y) * (r.x - q.x)\n  const term2 = (q.x - p.x) * (r.y - q.y)\n  const val = term1 - term2\n  const absTerm1 = Math.abs(term1)\n  const absTerm2 = Math.abs(term2)\n  const scale = absTerm1 > absTerm2 ? absTerm1 : absTerm2\n  if (Math.abs(val) <= COLINEAR_RELATIVE_EPSILON * scale) return 0 // colinear\n  return val > 0 ? 1 : 2 // clock or counterclock wise\n}\n\n/**\n * Returns true if q is on the segment p->r.\n */\nexport function onSegment(p: Point, q: Point, r: Point): boolean {\n  return (\n    q.x <= Math.max(p.x, r.x) &&\n    q.x >= Math.min(p.x, r.x) &&\n    q.y <= Math.max(p.y, r.y) &&\n    q.y >= Math.min(p.y, r.y)\n  )\n}\n\n/**\n * Returns the minimum distance between two segments.\n */\nfunction segmentsDistance(a1: Point, a2: Point, b1: Point, b2: Point): number {\n  // Handle degenerate cases: segments of zero length\n  if (a1.x === a2.x && a1.y === a2.y) {\n    return pointToSegmentDistance(a1, b1, b2)\n  }\n  if (b1.x === b2.x && b1.y === b2.y) {\n    return pointToSegmentDistance(b1, a1, a2)\n  }\n\n  // Check if segments intersect\n  if (doSegmentsIntersect(a1, a2, b1, b2)) {\n    return 0\n  }\n\n  // Compute the minimum distance between the segments (no array/spread: this\n  // runs in the inner loop of clearance checks)\n  return Math.min(\n    Math.min(\n      pointToSegmentDistance(a1, b1, b2),\n      pointToSegmentDistance(a2, b1, b2),\n    ),\n    Math.min(\n      pointToSegmentDistance(b1, a1, a2),\n      pointToSegmentDistance(b2, a1, a2),\n    ),\n  )\n}\n\n/**\n * Returns the minimum distance between a point and a segment.\n */\nexport function pointToSegmentDistance(p: Point, v: Point, w: Point): number {\n  // Hot path: called millions of times per autoroute. Arithmetic is identical\n  // to the original formulation; the projection point is kept in locals so no\n  // temporary object is allocated per call.\n  const wx = w.x - v.x\n  const wy = w.y - v.y\n  const l2 = wx ** 2 + wy ** 2\n  if (l2 === 0) return distance(p, v)\n\n  let t = ((p.x - v.x) * wx + (p.y - v.y) * wy) / l2\n  t = Math.max(0, Math.min(1, t))\n\n  const dx = p.x - (v.x + t * wx)\n  const dy = p.y - (v.y + t * wy)\n\n  return Math.sqrt(dx * dx + dy * dy)\n}\n\n/**\n * Returns the distance between two points.\n */\nexport function distance(p1: Point, p2: Point): number {\n  const dx = p1.x - p2.x\n  const dy = p1.y - p2.y\n  return Math.sqrt(dx * dx + dy * dy)\n}\n\n/**\n * Calculates the intersection point of two line segments.\n * Returns the intersection point {x, y} if the segments intersect, otherwise returns null.\n */\nexport function getSegmentIntersection(\n  a: Point,\n  b: Point,\n  u: Point,\n  v: Point,\n): Point | null {\n  const dx1 = b.x - a.x\n  const dy1 = b.y - a.y\n  const dx2 = v.x - u.x\n  const dy2 = v.y - u.y\n  const dx3 = a.x - u.x\n  const dy3 = a.y - u.y\n\n  const denominator = dx1 * dy2 - dy1 * dx2\n\n  // Check if lines are parallel or collinear\n  if (Math.abs(denominator) < 1e-10) {\n    // Lines are parallel or collinear\n    // We could add checks for collinear overlapping segments if needed,\n    // but for now, we return null as a single intersection point doesn't exist.\n    // The doSegmentsIntersect function handles collinearity checks if only a boolean is needed.\n    return null\n  }\n\n  // Correct formula for t (parameter for segment ab)\n  // t = (dy3 * dx2 - dx3 * dy2) / denominator\n  // The formula previously used was -(dy3 * dx2 - dx3 * dy2) / denominator\n  const t = (dy3 * dx2 - dx3 * dy2) / denominator\n  // Correct formula for s (parameter for segment uv)\n  // s = (dx1 * dy3 - dy1 * dx3) / denominator\n  // The formula previously used was incorrect.\n  const s = (dx1 * dy3 - dy1 * dx3) / denominator\n\n  // Check if the intersection point lies within both segments\n  // Use a small epsilon for floating point comparisons near 0 and 1\n  const epsilon = 1e-9\n  if (t >= -epsilon && t <= 1 + epsilon && s >= -epsilon && s <= 1 + epsilon) {\n    const intersectionX = a.x + t * dx1\n    const intersectionY = a.y + t * dy1\n    return { x: intersectionX, y: intersectionY }\n  }\n\n  // Segments do not intersect within their bounds\n  return null\n}\n\nexport function doesSegmentIntersectRect(\n  a: Point,\n  b: Point,\n  rect: { minX: number; minY: number; maxX: number; maxY: number },\n): boolean {\n  const pointInside = (p: Point) =>\n    p.x >= rect.minX && p.x <= rect.maxX && p.y >= rect.minY && p.y <= rect.maxY\n\n  if (pointInside(a) || pointInside(b)) {\n    return true\n  }\n\n  const topLeft = { x: rect.minX, y: rect.minY }\n  const topRight = { x: rect.maxX, y: rect.minY }\n  const bottomLeft = { x: rect.minX, y: rect.maxY }\n  const bottomRight = { x: rect.maxX, y: rect.maxY }\n\n  return (\n    doSegmentsIntersect(a, b, topLeft, topRight) ||\n    doSegmentsIntersect(a, b, topRight, bottomRight) ||\n    doSegmentsIntersect(a, b, bottomRight, bottomLeft) ||\n    doSegmentsIntersect(a, b, bottomLeft, topLeft)\n  )\n}\n"],"mappings":"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","names":[]}
+\ No newline at end of file
+diff --git a/dist/chunk-WZBFIE62.js b/dist/chunk-WZBFIE62.js
+new file mode 100644
+index 0000000..74c0d41
+--- /dev/null
++++ b/dist/chunk-WZBFIE62.js
+@@ -0,0 +1,49 @@
++import {
++  distance
++} from "./chunk-PUVNW6C2.js";
++import {
++  clamp
++} from "./chunk-DRDDWFOS.js";
++
++// src/point-distance.ts
++function pointToBoxDistance(p, box) {
++  const halfWidth = box.width / 2;
++  const halfHeight = box.height / 2;
++  const minX = box.center.x - halfWidth;
++  const maxX = box.center.x + halfWidth;
++  const minY = box.center.y - halfHeight;
++  const maxY = box.center.y + halfHeight;
++  if (p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY) {
++    return 0;
++  }
++  const closestX = clamp(p.x, minX, maxX);
++  const closestY = clamp(p.y, minY, maxY);
++  return distance(p, { x: closestX, y: closestY });
++}
++function pointToBoundsDistance(p, bounds) {
++  if (p.x >= bounds.minX && p.x <= bounds.maxX && p.y >= bounds.minY && p.y <= bounds.maxY) {
++    return 0;
++  }
++  const closestX = clamp(p.x, bounds.minX, bounds.maxX);
++  const closestY = clamp(p.y, bounds.minY, bounds.maxY);
++  return distance(p, { x: closestX, y: closestY });
++}
++function midpoint(p1, p2) {
++  return {
++    x: (p1.x + p2.x) / 2,
++    y: (p1.y + p2.y) / 2
++  };
++}
++function distSq(p1, p2) {
++  const dx = p1.x - p2.x;
++  const dy = p1.y - p2.y;
++  return dx * dx + dy * dy;
++}
++
++export {
++  pointToBoxDistance,
++  pointToBoundsDistance,
++  midpoint,
++  distSq
++};
++//# sourceMappingURL=chunk-WZBFIE62.js.map
+\ No newline at end of file
+diff --git a/dist/chunk-WZBFIE62.js.map b/dist/chunk-WZBFIE62.js.map
+new file mode 100644
+index 0000000..100ff11
+--- /dev/null
++++ b/dist/chunk-WZBFIE62.js.map
+@@ -0,0 +1 @@
++{"version":3,"sources":["../src/point-distance.ts"],"sourcesContent":["import type { Point, Bounds } from \"./common\"\nimport { distance } from \"./line-intersections\"\nimport { clamp } from \"./nearest-box\"\nimport type { Box } from \"./nearest-box\"\n\n/**\n * Returns the minimum distance from a point to a box.\n * If the point is inside the box, the distance is 0.\n */\nexport function pointToBoxDistance(p: Point, box: Box): number {\n  const halfWidth = box.width / 2\n  const halfHeight = box.height / 2\n  const minX = box.center.x - halfWidth\n  const maxX = box.center.x + halfWidth\n  const minY = box.center.y - halfHeight\n  const maxY = box.center.y + halfHeight\n\n  // Check if the point is inside the box\n  if (p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY) {\n    return 0\n  }\n\n  // Find the closest point on the box boundary\n  const closestX = clamp(p.x, minX, maxX)\n  const closestY = clamp(p.y, minY, maxY)\n\n  // Calculate the distance to the closest point\n  return distance(p, { x: closestX, y: closestY })\n}\n\n/**\n * Returns the minimum distance from a point to a bounds rectangle.\n * If the point is inside the bounds, the distance is 0.\n */\nexport function pointToBoundsDistance(p: Point, bounds: Bounds): number {\n  // Check if the point is inside the bounds\n  if (\n    p.x >= bounds.minX &&\n    p.x <= bounds.maxX &&\n    p.y >= bounds.minY &&\n    p.y <= bounds.maxY\n  ) {\n    return 0\n  }\n\n  // Find the closest point on the bounds boundary\n  const closestX = clamp(p.x, bounds.minX, bounds.maxX)\n  const closestY = clamp(p.y, bounds.minY, bounds.maxY)\n\n  // Calculate the distance to the closest point\n  return distance(p, { x: closestX, y: closestY })\n}\n\nexport function midpoint(p1: Point, p2: Point): Point {\n  return {\n    x: (p1.x + p2.x) / 2,\n    y: (p1.y + p2.y) / 2,\n  }\n}\n\nexport function distSq(p1: Point, p2: Point): number {\n  const dx = p1.x - p2.x\n  const dy = p1.y - p2.y\n  return dx * dx + dy * dy\n}\n"],"mappings":";;;;;;;;AASO,SAAS,mBAAmB,GAAU,KAAkB;AAC7D,QAAM,YAAY,IAAI,QAAQ;AAC9B,QAAM,aAAa,IAAI,SAAS;AAChC,QAAM,OAAO,IAAI,OAAO,IAAI;AAC5B,QAAM,OAAO,IAAI,OAAO,IAAI;AAC5B,QAAM,OAAO,IAAI,OAAO,IAAI;AAC5B,QAAM,OAAO,IAAI,OAAO,IAAI;AAG5B,MAAI,EAAE,KAAK,QAAQ,EAAE,KAAK,QAAQ,EAAE,KAAK,QAAQ,EAAE,KAAK,MAAM;AAC5D,WAAO;AAAA,EACT;AAGA,QAAM,WAAW,MAAM,EAAE,GAAG,MAAM,IAAI;AACtC,QAAM,WAAW,MAAM,EAAE,GAAG,MAAM,IAAI;AAGtC,SAAO,SAAS,GAAG,EAAE,GAAG,UAAU,GAAG,SAAS,CAAC;AACjD;AAMO,SAAS,sBAAsB,GAAU,QAAwB;AAEtE,MACE,EAAE,KAAK,OAAO,QACd,EAAE,KAAK,OAAO,QACd,EAAE,KAAK,OAAO,QACd,EAAE,KAAK,OAAO,MACd;AACA,WAAO;AAAA,EACT;AAGA,QAAM,WAAW,MAAM,EAAE,GAAG,OAAO,MAAM,OAAO,IAAI;AACpD,QAAM,WAAW,MAAM,EAAE,GAAG,OAAO,MAAM,OAAO,IAAI;AAGpD,SAAO,SAAS,GAAG,EAAE,GAAG,UAAU,GAAG,SAAS,CAAC;AACjD;AAEO,SAAS,SAAS,IAAW,IAAkB;AACpD,SAAO;AAAA,IACL,IAAI,GAAG,IAAI,GAAG,KAAK;AAAA,IACnB,IAAI,GAAG,IAAI,GAAG,KAAK;AAAA,EACrB;AACF;AAEO,SAAS,OAAO,IAAW,IAAmB;AACnD,QAAM,KAAK,GAAG,IAAI,GAAG;AACrB,QAAM,KAAK,GAAG,IAAI,GAAG;AACrB,SAAO,KAAK,KAAK,KAAK;AACxB;","names":[]}
+\ No newline at end of file
+diff --git a/dist/index.js b/dist/index.js
+index 9144a51..d67fcbb 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -5,7 +5,7 @@ import {
+   isPointInsidePolygon,
+   isRectCompletelyInsidePolygon,
+   isRectOverlappingPolygon
+-} from "./chunk-4V2EVVKE.js";
++} from "./chunk-NCRH2RG3.js";
+ import {
+   range
+ } from "./chunk-KY53E6CT.js";
+@@ -15,7 +15,7 @@ import {
+   segmentToBoxMinDistance,
+   segmentToCircleMinDistance,
+   segmentToSegmentMinDistance
+-} from "./chunk-Y7G4VXR7.js";
++} from "./chunk-K4Y4TLE3.js";
+ import {
+   getUnitVectorFromDirection,
+   getUnitVectorFromPointAToB
+@@ -31,7 +31,7 @@ import {
+   midpoint,
+   pointToBoundsDistance,
+   pointToBoxDistance
+-} from "./chunk-5J3PCV4D.js";
++} from "./chunk-WZBFIE62.js";
+ import {
+   distance,
+   doSegmentsIntersect,
+@@ -41,7 +41,7 @@ import {
+   onSegment,
+   orientation,
+   pointToSegmentDistance
+-} from "./chunk-EFLPMB4J.js";
++} from "./chunk-PUVNW6C2.js";
+ import {
+   clamp,
+   computeDistanceBetweenBoxes,
+diff --git a/dist/line-intersections.js b/dist/line-intersections.js
+index 64e5c6a..6816d57 100644
+--- a/dist/line-intersections.js
++++ b/dist/line-intersections.js
+@@ -7,7 +7,7 @@ import {
+   onSegment,
+   orientation,
+   pointToSegmentDistance
+-} from "./chunk-EFLPMB4J.js";
++} from "./chunk-PUVNW6C2.js";
+ export {
+   distance,
+   doSegmentsIntersect,
+diff --git a/dist/point-distance.js b/dist/point-distance.js
+index dc75473..342f9a5 100644
+--- a/dist/point-distance.js
++++ b/dist/point-distance.js
+@@ -3,8 +3,8 @@ import {
+   midpoint,
+   pointToBoundsDistance,
+   pointToBoxDistance
+-} from "./chunk-5J3PCV4D.js";
+-import "./chunk-EFLPMB4J.js";
++} from "./chunk-WZBFIE62.js";
++import "./chunk-PUVNW6C2.js";
+ import "./chunk-DRDDWFOS.js";
+ export {
+   distSq,
+diff --git a/dist/polygon.js b/dist/polygon.js
+index b2118ad..61bffa4 100644
+--- a/dist/polygon.js
++++ b/dist/polygon.js
+@@ -5,8 +5,8 @@ import {
+   isPointInsidePolygon,
+   isRectCompletelyInsidePolygon,
+   isRectOverlappingPolygon
+-} from "./chunk-4V2EVVKE.js";
+-import "./chunk-EFLPMB4J.js";
++} from "./chunk-NCRH2RG3.js";
++import "./chunk-PUVNW6C2.js";
+ export {
+   areBoundsCompletelyInsidePolygon,
+   areBoundsOverlappingPolygon,
+diff --git a/dist/segment-distance.js b/dist/segment-distance.js
+index f651216..b635fd0 100644
+--- a/dist/segment-distance.js
++++ b/dist/segment-distance.js
+@@ -4,8 +4,8 @@ import {
+   segmentToBoxMinDistance,
+   segmentToCircleMinDistance,
+   segmentToSegmentMinDistance
+-} from "./chunk-Y7G4VXR7.js";
+-import "./chunk-EFLPMB4J.js";
++} from "./chunk-K4Y4TLE3.js";
++import "./chunk-PUVNW6C2.js";
+ import "./chunk-DRDDWFOS.js";
+ export {
+   pointToSegmentClosestPoint,
