@@ -41,6 +41,18 @@ perf-audit-2026-07-23.md. Baselines: main @ v0.0.714 (b7b243cc), 64-thread x86, 
      shared getPortOwners between direct+alternate blocker searches. **Identity exact: s5
      1053687, s8 1973601 iterations both unchanged**, DRC 0/41 unchanged, wall s8
      101.1→99.8s (single run, noise-level — structural wins; gauntlet will resolve).
+  6b. **R1 compact-hop typed arrays (16192ba9): Tier-1 1.089x, BIT-IDENTICAL on both
+     anchors, every board faster.** Every port has exactly 2 incident regions ⇒ hop space
+     = 2·portCount ⇒ the sparse-mode Maps (best-cost + heap index + closed set) become
+     typed arrays with generation stamps; compact hopId cached on candidates kills the
+     per-sift getHopId/Map.set (R7). Gates: s5 1053687 / s8 1973601 iterations EXACT.
+     Tier-1 sequential A/B (concurrency 1, back-to-back single runs): per-sample
+     22/87/50/244/136s → 19/82/43/224/127s (s5 1.16x, s8 1.06x, s10 1.16x, s6 1.09x,
+     s12 1.07x; aggregate 539→495s = 1.089x), P50 86.7→82.4s, P95 222.2→204.3s, avgVia
+     247.2 identical, all 6 DRC failure buckets byte-identical (70/29/11/6/30/6). The
+     ~9% > the predicted 2-4% — Map/Set GC-pressure reduction compounds beyond the
+     direct op savings. Results: scratchpad tier1-baseline-r5.json / tier1-after-r1.json
+     (also perf-artifacts). Patch: perf-patches/bun-tiny-hypergraph-r1-compact-hop.patch.
   7. **Upstream PRs/issues staged, not fired** (PR-STAGING.md): math-utils correctness +
      perf PRs (branch hazard fixed — perf/geometry-hot-path LACKS the collinearity fix;
      use perf/parametric-segment-distance, 140/140 tests, pushed), autorouter growth-cap
