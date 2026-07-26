@@ -70,6 +70,7 @@ export class HighDensitySolver extends BaseSolver {
   private nodePool: HdNodePool | null = null
   private parallelFailedNodeIds: string[] = []
   private dispatchedNodes = new Map<string, NodeWithPortPoints>()
+  private parallelDispatchSorted = false
   private solvedNodeIds = new Set<string>()
   activeSubSolver: HighDensityIntraNodeSolver | null = null
   connMap?: ConnectivityMap
@@ -379,6 +380,19 @@ export class HighDensitySolver extends BaseSolver {
       } else {
         this.parallelFailedNodeIds.push(result.nodeId)
         this.error ??= `Failed to solve node ${result.nodeId}: ${result.error}`
+      }
+    }
+
+    // Longest-processing-time-first: the stage's work is extremely skewed (the
+    // top 10 nodes are 81-91% of it), so dispatching big nodes last leaves
+    // workers idle behind one straggler. Port count is a cheap proxy for cost -
+    // the expensive nodes carry 6-18 port points versus 2-8 typical.
+    if (!this.parallelDispatchSorted) {
+      this.parallelDispatchSorted = true
+      if (process.env.TS_PARALLEL_HD_LPT !== "0") {
+        this.unsolvedNodePortPoints.sort(
+          (a, b) => a.portPoints.length - b.portPoints.length,
+        )
       }
     }
 
