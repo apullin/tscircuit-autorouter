@@ -29,10 +29,6 @@ import {
   parallelReplay2Enabled,
   runOnlineReplayRace,
 } from "../../parallel/replayPool2"
-import {
-  NativeHighDensitySolverA01,
-  nativeA01Enabled,
-} from "./NativeHighDensitySolverA01"
 import { extractWinningRoutes } from "./extractWinningRoutes"
 import { repairDisconnectedSameRootPortPoints } from "./repairDisconnectedSameRootPortPoints"
 
@@ -966,21 +962,6 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
     }
 
     if (hyperParameters.HIGH_DENSITY_A01) {
-      if (nativeA01Enabled()) {
-        return new NativeHighDensitySolverA01({
-          nodeWithPortPoints: this.nodeWithPortPoints,
-          cellSizeMm: 0.1,
-          viaDiameter: this.constructorParams.viaDiameter ?? 0.3,
-          traceThickness: this.constructorParams.traceWidth ?? 0.15,
-          traceMargin: 0.1,
-          viaMinDistFromBorder:
-            (this.constructorParams.viaDiameter ?? 0.3) / 2,
-          effort: this.effort,
-          hyperParameters: {
-            shuffleSeed: hyperParameters.SHUFFLE_SEED ?? 0,
-          },
-        }) as any
-      }
       const solver = new HighDensitySolverA01({
         nodeWithPortPoints: this.nodeWithPortPoints,
         cellSizeMm: 0.1,

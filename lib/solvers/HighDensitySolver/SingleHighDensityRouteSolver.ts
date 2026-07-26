@@ -734,7 +734,7 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
 
         if (this.isNodeTooCloseToObstacle(neighbor)) {
           if (this.debugEnabled) {
-            this.debug_nodesTooCloseToObstacle.add(neighborKey)
+            this.debug_nodesTooCloseToObstacle.add(this.getNodeKey(neighbor))
           }
           this.exploredNodes.add(neighborKey)
           continue
@@ -747,7 +747,9 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
 
         if (this.doesPathToParentIntersectObstacle(neighbor)) {
           if (this.debugEnabled) {
-            this.debug_nodePathToParentIntersectsObstacle.add(neighborKey)
+            this.debug_nodePathToParentIntersectsObstacle.add(
+              this.getNodeKey(neighbor),
+            )
           }
           this.exploredNodes.add(neighborKey)
           continue
@@ -884,7 +886,7 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
     }
     this.exploredNodes.add(currentNodeKey)
     if (this.debugEnabled) {
-      this.debug_exploredNodesOrdered.push(currentNodeKey)
+      this.debug_exploredNodesOrdered.push(this.getNodeKey(currentNode))
     }
 
     const goalDist = distance(currentNode, this.B)
