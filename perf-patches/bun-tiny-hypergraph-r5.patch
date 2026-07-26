@@ -1,0 +1,189 @@
+diff --git a/lib/core.ts b/lib/core.ts
+index 0d4b289..1a6bc0c 100644
+--- a/lib/core.ts
++++ b/lib/core.ts
+@@ -7,7 +7,7 @@ import {
+   DEFAULT_MIN_VIA_PAD_DIAMETER,
+   isKnownSingleLayerMask,
+ } from "./computeRegionCost"
+-import { countNewIntersectionsWithValues } from "./countNewIntersections"
++import { countNewIntersectionsPackedWithValues } from "./countNewIntersections"
+ import { MinHeap } from "./MinHeap"
+ import { shuffle } from "./shuffle"
+ import type { StaticallyUnroutableRouteSummary } from "./static-reachability"
+@@ -581,7 +581,6 @@ export class TinyHyperGraphSolver extends BaseSolver {
+ 
+       const g = this.computeG(currentCandidate, neighborPortId)
+       if (!Number.isFinite(g)) continue
+-      const h = this.computeH(neighborPortId)
+ 
+       const nextRegionId =
+         topology.incidentPortRegion[neighborPortId][0] ===
+@@ -596,6 +595,15 @@ export class TinyHyperGraphSolver extends BaseSolver {
+         continue
+       }
+ 
++      // Dominance check before computeH and the candidate allocation:
++      // dominated hops (the common case in a converged region) previously paid
++      // for both only to be discarded. The goal port cannot reach here — it
++      // returns at the top of the loop — so the old post-allocation goal
++      // branch was dead and is removed.
++      const candidateHopId = this.getHopId(neighborPortId, nextRegionId)
++      if (g >= this.getCandidateBestCost(candidateHopId)) continue
++
++      const h = this.computeH(neighborPortId)
+       const newCandidate = {
+         prevRegionId: currentCandidate.nextRegionId,
+         nextRegionId,
+@@ -606,14 +614,6 @@ export class TinyHyperGraphSolver extends BaseSolver {
+         prevCandidate: currentCandidate,
+       }
+ 
+-      if (neighborPortId === state.goalPortId) {
+-        this.onPathFound(newCandidate)
+-        return
+-      }
+-
+-      const candidateHopId = this.getHopId(neighborPortId, nextRegionId)
+-      if (g >= this.getCandidateBestCost(candidateHopId)) continue
+-
+       this.setCandidateBestCost(candidateHopId, g)
+       state.candidateQueue.queue(newCandidate)
+     }
+@@ -778,18 +778,16 @@ export class TinyHyperGraphSolver extends BaseSolver {
+       port1Id,
+       port2Id,
+     )
+-    const [
+-      newSameLayerIntersections,
+-      newCrossLayerIntersections,
+-      newEntryExitLayerChanges,
+-    ] = countNewIntersectionsWithValues(
++    const packedIntersections = countNewIntersectionsPackedWithValues(
+       regionCache,
+       state.currentRouteNetId!,
+       segmentGeometry.lesserAngle,
+       segmentGeometry.greaterAngle,
+       segmentGeometry.layerMask,
+-      segmentGeometry.entryExitLayerChanges,
+     )
++    const newSameLayerIntersections = packedIntersections & 0xffff
++    const newCrossLayerIntersections = packedIntersections >>> 16
++    const newEntryExitLayerChanges = segmentGeometry.entryExitLayerChanges
+     const nextLength = regionCache.netIds.length + 1
+ 
+     const netIds = new Int32Array(nextLength)
+@@ -1405,18 +1403,16 @@ export class TinyHyperGraphSolver extends BaseSolver {
+     const layerMask = (1 << currentPortZ) | (1 << neighborPortZ)
+     const entryExitLayerChanges = currentPortZ !== neighborPortZ ? 1 : 0
+ 
+-    const [
+-      newSameLayerIntersections,
+-      newCrossLayerIntersections,
+-      newEntryExitLayerChanges,
+-    ] = countNewIntersectionsWithValues(
++    const packedIntersections = countNewIntersectionsPackedWithValues(
+       regionCache,
+       state.currentRouteNetId!,
+       lesserAngle,
+       greaterAngle,
+       layerMask,
+-      entryExitLayerChanges,
+     )
++    const newSameLayerIntersections = packedIntersections & 0xffff
++    const newCrossLayerIntersections = packedIntersections >>> 16
++    const newEntryExitLayerChanges = entryExitLayerChanges
+ 
+     if (
+       newSameLayerIntersections > 0 &&
+diff --git a/lib/countNewIntersections.ts b/lib/countNewIntersections.ts
+index 355f8e2..a2e5871 100644
+--- a/lib/countNewIntersections.ts
++++ b/lib/countNewIntersections.ts
+@@ -61,6 +61,45 @@ export const countNewIntersectionsWithValues = (
+   ]
+ }
+ 
++/**
++ * Allocation-free variant for the A* hot path: returns
++ * `same | (cross << 16)` instead of a tuple. Counts are bounded by the
++ * region's pair count (far below 2^16). The tuple version's third element was
++ * a pass-through of the caller's own `entryExitLayerChanges` argument, so it
++ * is dropped here. Mirrors countNewIntersectionsWithValues exactly.
++ */
++export const countNewIntersectionsPackedWithValues = (
++  existingPairs: DynamicAnglePairArrays,
++  newNet: number,
++  newLesserAngle: number,
++  newGreaterAngle: number,
++  newLayerMask: number,
++): number => {
++  const { netIds, lesserAngles, greaterAngles, layerMasks } = existingPairs
++
++  let sameLayerIntersectionCount = 0
++  let crossingLayerIntersectionCount = 0
++
++  for (let i = 0; i < netIds.length; i++) {
++    if (newNet === netIds[i]) continue
++
++    const lesserAngleIsInsideInterval =
++      newLesserAngle < lesserAngles[i] && lesserAngles[i] < newGreaterAngle
++    const greaterAngleIsInsideInterval =
++      newLesserAngle < greaterAngles[i] && greaterAngles[i] < newGreaterAngle
++
++    if (lesserAngleIsInsideInterval === greaterAngleIsInsideInterval) continue
++
++    if ((newLayerMask & layerMasks[i]) !== 0) {
++      sameLayerIntersectionCount++
++    } else {
++      crossingLayerIntersectionCount++
++    }
++  }
++
++  return sameLayerIntersectionCount | (crossingLayerIntersectionCount << 16)
++}
++
+ export const countNewIntersections = (
+   existingPairs: DynamicAnglePairArrays,
+   newPair: DynamicAnglePair,
+diff --git a/lib/selective-rerip-tiny-hyper-graph-solver.ts b/lib/selective-rerip-tiny-hyper-graph-solver.ts
+index d808c93..980e63e 100644
+--- a/lib/selective-rerip-tiny-hyper-graph-solver.ts
++++ b/lib/selective-rerip-tiny-hyper-graph-solver.ts
+@@ -193,7 +193,8 @@ export class SelectiveReripTinyHyperGraphSolver extends DistanceAwareTinyHyperGr
+       )
+     }
+ 
+-    const directPath = this.findRelaxedBlockerPath()
++    const sharedPortOwners = this.getPortOwners()
++    const directPath = this.findRelaxedBlockerPath(undefined, sharedPortOwners)
+     if (!directPath.found || directPath.owners.size === 0) {
+       this.selectiveReripStats.globalReripCount += 1
+       this.selectiveReripStats.globalReripReason = !directPath.found
+@@ -230,6 +231,7 @@ export class SelectiveReripTinyHyperGraphSolver extends DistanceAwareTinyHyperGr
+       this.selectiveReripStats.alternateBlockerSearchCount += 1
+       alternatePath = this.findRelaxedBlockerPath(
+         new Set(repeatedOwnerRouteIds),
++        sharedPortOwners,
+       )
+       if (!alternatePath.found) {
+         this.selectiveReripStats.globalReripCount += 1
+@@ -309,6 +311,9 @@ export class SelectiveReripTinyHyperGraphSolver extends DistanceAwareTinyHyperGr
+ 
+   protected findRelaxedBlockerPath(
+     forbiddenOwnerRouteIds: ReadonlySet<RouteId> = new Set<RouteId>(),
++    // The direct and alternate searches run back-to-back with committed state
++    // unchanged; the caller can share one getPortOwners() build between them.
++    sharedPortOwners?: ReadonlyMap<PortId, ReadonlySet<RouteId>>,
+   ): DistinctOwnerBlockerSearchResult<
+     RelaxedSearchState,
+     RouteId,
+@@ -331,7 +336,7 @@ export class SelectiveReripTinyHyperGraphSolver extends DistanceAwareTinyHyperGr
+       )
+     }
+ 
+-    const portOwners = this.getPortOwners()
++    const portOwners = sharedPortOwners ?? this.getPortOwners()
+     return findDistinctOwnerBlockerPath({
+       start: { portId: startPortId, nextRegionId: startRegionId },
+       getStateKey: ({ portId, nextRegionId }): number =>

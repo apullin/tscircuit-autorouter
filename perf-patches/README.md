@@ -56,6 +56,16 @@ rm+cp also works. Never edit in place.
   aggregate with DRC 581→575 (net better), all dataset01 boards identical.
   One Math.hypot deliberately remains (selective-rerip :455, outside the
   measured swap; future R5 work).
+- bun-tiny-hypergraph-r5.patch — **identity-safe, apply AFTER the hypot
+  patch** (2026-07-26, round-5 small wins from the recovered portPointPathing
+  analysis): R2a expansion-loop reorder (dominance check before computeH and
+  the candidate object literal — dominated hops no longer allocate; dead
+  post-allocation goal branch removed, goal returns at loop top), R4
+  countNewIntersectionsPackedWithValues (packed int replaces the per-call
+  tuple at both core.ts call sites; tuple API kept for compat), R6 shared
+  getPortOwners() between the direct and alternate blocker searches (state
+  provably unchanged between them; consumed as ReadonlyMap). Verified:
+  sample-5 iterations exactly 1053687 (unchanged), DRC 0, repo tsc clean.
 - bun-high-density-a01@0.0.36.patch — fillViaOccupants inlined + single-entry
   occupancy-version cache (A03 2.2x micro on dataset01 sample001), stepOnce /
   computeMoveCostAndRips invariant hoisting. Bit-identical outputs.
