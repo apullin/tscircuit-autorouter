@@ -1,0 +1,297 @@
+diff --git a/lib/computeRegionCost.ts b/lib/computeRegionCost.ts
+index 5100584..7e48be5 100644
+--- a/lib/computeRegionCost.ts
++++ b/lib/computeRegionCost.ts
+@@ -3,6 +3,16 @@ export const TRACE_VIA_MARGIN = 0.15
+ const traceWidth = 0.1
+ const IMPOSSIBLE_SINGLE_LAYER_INTERSECTION_COST = 10
+ 
++/**
++ * Hoisted from computeRegionCostForArea for the default minViaPadDiameter
++ * (the common case): computed with the exact same expression shape (add,
++ * then ** 2) so the value is bit-identical to the per-call result whenever
++ * minViaPadDiameter === DEFAULT_MIN_VIA_PAD_DIAMETER.
++ */
++const DEFAULT_VIA_SIZE_WITH_MARGIN =
++  DEFAULT_MIN_VIA_PAD_DIAMETER + TRACE_VIA_MARGIN
++const DEFAULT_VIA_SIZE_WITH_MARGIN_SQ = DEFAULT_VIA_SIZE_WITH_MARGIN ** 2
++
+ export const isKnownSingleLayerMask = (regionAvailableZMask: number) =>
+   regionAvailableZMask > 0 &&
+   (regionAvailableZMask & (regionAvailableZMask - 1)) === 0
+@@ -43,8 +53,10 @@ export const computeRegionCostForArea = (
+     numSameLayerIntersections * 2 +
+     numCrossLayerIntersections * 1 +
+     numEntryExitChanges * 1
+-  const viaSizeWithMargin = minViaPadDiameter + TRACE_VIA_MARGIN
+-  const viaSizeWithMarginSq = viaSizeWithMargin ** 2
++  const viaSizeWithMarginSq =
++    minViaPadDiameter === DEFAULT_MIN_VIA_PAD_DIAMETER
++      ? DEFAULT_VIA_SIZE_WITH_MARGIN_SQ
++      : (minViaPadDiameter + TRACE_VIA_MARGIN) ** 2
+ 
+   const traceCountMult = 1 + traceCount / 5
+   const impossibleSingleLayerIntersectionCost = isKnownSingleLayerMask(
+diff --git a/lib/core.ts b/lib/core.ts
+index c8f929f..a36f340 100644
+--- a/lib/core.ts
++++ b/lib/core.ts
+@@ -3,7 +3,7 @@ import { BaseSolver } from "@tscircuit/solver-utils"
+ import type { GraphicsObject } from "graphics-debug"
+ import { convertToSerializedHyperGraph } from "./compat/convertToSerializedHyperGraph"
+ import {
+-  computeRegionCost,
++  computeRegionCostForArea,
+   DEFAULT_MIN_VIA_PAD_DIAMETER,
+   isKnownSingleLayerMask,
+ } from "./computeRegionCost"
+@@ -376,6 +376,52 @@ export class TinyHyperGraphSolver extends BaseSolver {
+     entryExitLayerChanges: 0,
+   }
+ 
++  /**
++   * regionAreaByRegionId[regionId] = regionWidth[regionId] * regionHeight[regionId],
++   * precomputed once in the constructor. The product is used as-is as the
++   * area argument of computeRegionCostForArea, so the value is bit-identical
++   * to computing it inside computeRegionCost on every call. Topology geometry
++   * arrays are never mutated after construction.
++   */
++  private regionAreaByRegionId: Float64Array
++
++  /**
++   * Expansion stash: per-dequeued-candidate invariants for computeG.
++   *
++   * Every neighbor expanded from a dequeued candidate is evaluated for
++   * traversing the same region (currentCandidate.nextRegionId), so everything
++   * computeG derives from that region and from the current candidate/port is
++   * fixed across the whole neighbor loop. _step populates these fields once
++   * per dequeue (populateExpansionInvariants, immediately before the neighbor
++   * loop) and computeG reads them instead of re-deriving per neighbor.
++   * computeG repopulates on candidate mismatch, so any call path arriving
++   * with a different candidate still computes identical values.
++   *
++   * Predeclared explicitly as class fields for hidden-class stability.
++   */
++  private expansionCandidate: Candidate | undefined = undefined
++  private expansionNextRegionId = -1
++  private expansionRegionCache: RegionIntersectionCache =
++    createEmptyRegionIntersectionCache()
++  private expansionCurrentRouteNetId = -1
++  private expansionCurrentPortAngle = 0
++  private expansionCurrentPortZ = 0
++  private expansionRegionIsKnownSingleLayer = false
++  private expansionExistingSameLayerIntersections = 0
++  private expansionExistingCrossingLayerIntersections = 0
++  private expansionExistingEntryExitLayerChanges = 0
++  private expansionExistingSegmentCount = 0
++  private expansionExistingRegionCost = 0
++  private expansionRegionCongestionCost = 0
++  private expansionCurrentG = 0
++  private expansionPortPenalty: Float64Array | undefined = undefined
++  /**
++   * Stashed portX/portY of the dequeued candidate's port, read by the
++   * DistanceAwareTinyHyperGraphSolver computeG override.
++   */
++  protected expansionCurrentPortX = 0
++  protected expansionCurrentPortY = 0
++
+   DISTANCE_TO_COST = 0.05 // 50mm = 1 cost unit (1 cost unit ~ 100% chance of failure)
+   minViaPadDiameter = DEFAULT_MIN_VIA_PAD_DIAMETER
+ 
+@@ -434,6 +480,13 @@ export class TinyHyperGraphSolver extends BaseSolver {
+     }
+     this.routeAttemptCountByRouteId = new Uint32Array(problem.routeCount)
+     this.routeSuccessCountByRouteId = new Uint32Array(problem.routeCount)
++
++    const regionAreaByRegionId = new Float64Array(topology.regionCount)
++    for (let regionId = 0; regionId < topology.regionCount; regionId++) {
++      regionAreaByRegionId[regionId] =
++        topology.regionWidth[regionId] * topology.regionHeight[regionId]
++    }
++    this.regionAreaByRegionId = regionAreaByRegionId
+   }
+ 
+   get problemSetup(): TinyHyperGraphProblemSetup {
+@@ -587,6 +640,11 @@ export class TinyHyperGraphSolver extends BaseSolver {
+     const neighbors =
+       topology.regionIncidentPorts[currentCandidate.nextRegionId]
+ 
++    // Stash the per-dequeued-candidate invariants once, before the first
++    // computeG call of this expansion (including the DistanceAware
++    // onPathFound -> computeG path, which runs from inside this loop).
++    this.populateExpansionInvariants(currentCandidate)
++
+     for (const neighborPortId of neighbors) {
+       const assignedNetId = state.portAssignment[neighborPortId]
+       if (this.isPortReservedForDifferentNet(neighborPortId)) continue
+@@ -736,9 +794,10 @@ export class TinyHyperGraphSolver extends BaseSolver {
+     numEntryExitChanges: number,
+     traceCount: number,
+   ): number {
+-    return computeRegionCost(
+-      this.topology.regionWidth[regionId],
+-      this.topology.regionHeight[regionId],
++    // regionAreaByRegionId holds the identical regionWidth * regionHeight
++    // product computeRegionCost would compute per call.
++    return computeRegionCostForArea(
++      this.regionAreaByRegionId[regionId],
+       numSameLayerIntersections,
+       numCrossLayerIntersections,
+       numEntryExitChanges,
+@@ -1379,24 +1438,69 @@ export class TinyHyperGraphSolver extends BaseSolver {
+     state.currentRouteId = undefined
+   }
+ 
+-  computeG(currentCandidate: Candidate, neighborPortId: PortId): number {
++  /**
++   * Stashes everything computeG derives from the dequeued candidate and from
++   * the region it expands into (currentCandidate.nextRegionId) — invariant
++   * across the whole neighbor loop. Pure reads; the only writes are to the
++   * expansion* stash fields.
++   *
++   * isKnownSingleLayerRegion was previously evaluated inside computeG only
++   * when newSameLayerIntersections > 0; it is side-effect-free and depends
++   * only on the region, so evaluating it unconditionally here yields the
++   * identical value on every branch that reads it.
++   */
++  protected populateExpansionInvariants(currentCandidate: Candidate) {
+     const { state, topology } = this
+-
+     const nextRegionId = currentCandidate.nextRegionId
+-
+-    const regionCache = state.regionIntersectionCaches[nextRegionId]
+     const currentPortId = currentCandidate.portId
+-    // Hoist hot topology arrays into locals (avoids repeated property loads)
+-    const { incidentPortRegion, portAngleForRegion1, portAngleForRegion2, portZ } =
+-      topology
+-    const currentPortIncidentRegions = incidentPortRegion[currentPortId]
+-    const neighborPortIncidentRegions = incidentPortRegion[neighborPortId]
++    const regionCache = state.regionIntersectionCaches[nextRegionId]
++    const currentPortIncidentRegions =
++      topology.incidentPortRegion[currentPortId]
+     const currentPortAngle =
+       currentPortIncidentRegions[0] === nextRegionId ||
+       currentPortIncidentRegions[1] !== nextRegionId
+-        ? portAngleForRegion1[currentPortId]
+-        : (portAngleForRegion2?.[currentPortId] ??
+-          portAngleForRegion1[currentPortId])
++        ? topology.portAngleForRegion1[currentPortId]
++        : (topology.portAngleForRegion2?.[currentPortId] ??
++          topology.portAngleForRegion1[currentPortId])
++
++    this.expansionCandidate = currentCandidate
++    this.expansionNextRegionId = nextRegionId
++    this.expansionRegionCache = regionCache
++    this.expansionCurrentRouteNetId = state.currentRouteNetId!
++    this.expansionCurrentPortAngle = currentPortAngle
++    this.expansionCurrentPortZ = topology.portZ[currentPortId]
++    this.expansionRegionIsKnownSingleLayer =
++      this.isKnownSingleLayerRegion(nextRegionId)
++    this.expansionExistingSameLayerIntersections =
++      regionCache.existingSameLayerIntersections
++    this.expansionExistingCrossingLayerIntersections =
++      regionCache.existingCrossingLayerIntersections
++    this.expansionExistingEntryExitLayerChanges =
++      regionCache.existingEntryExitLayerChanges
++    this.expansionExistingSegmentCount = regionCache.existingSegmentCount
++    this.expansionExistingRegionCost = regionCache.existingRegionCost
++    this.expansionRegionCongestionCost =
++      state.regionCongestionCost[nextRegionId]
++    this.expansionCurrentG = currentCandidate.g
++    this.expansionPortPenalty = this.problem.portPenalty
++    this.expansionCurrentPortX = topology.portX[currentPortId]
++    this.expansionCurrentPortY = topology.portY[currentPortId]
++  }
++
++  computeG(currentCandidate: Candidate, neighborPortId: PortId): number {
++    // Per-dequeued-candidate invariants come from the expansion stash,
++    // populated at the dequeue site in _step. The mismatch guard keeps every
++    // other call path identical by repopulating on the spot.
++    if (this.expansionCandidate !== currentCandidate) {
++      this.populateExpansionInvariants(currentCandidate)
++    }
++
++    const nextRegionId = this.expansionNextRegionId
++    // Hoist hot topology arrays into locals (avoids repeated property loads)
++    const { incidentPortRegion, portAngleForRegion1, portAngleForRegion2, portZ } =
++      this.topology
++    const neighborPortIncidentRegions = incidentPortRegion[neighborPortId]
++    const currentPortAngle = this.expansionCurrentPortAngle
+     const neighborPortAngle =
+       neighborPortIncidentRegions[0] === nextRegionId ||
+       neighborPortIncidentRegions[1] !== nextRegionId
+@@ -1411,14 +1515,14 @@ export class TinyHyperGraphSolver extends BaseSolver {
+       currentPortAngle < neighborPortAngle
+         ? neighborPortAngle
+         : currentPortAngle
+-    const currentPortZ = portZ[currentPortId]
++    const currentPortZ = this.expansionCurrentPortZ
+     const neighborPortZ = portZ[neighborPortId]
+     const layerMask = (1 << currentPortZ) | (1 << neighborPortZ)
+     const entryExitLayerChanges = currentPortZ !== neighborPortZ ? 1 : 0
+ 
+     const packedIntersections = countNewIntersectionsPackedWithValues(
+-      regionCache,
+-      state.currentRouteNetId!,
++      this.expansionRegionCache,
++      this.expansionCurrentRouteNetId,
+       lesserAngle,
+       greaterAngle,
+       layerMask,
+@@ -1429,7 +1533,7 @@ export class TinyHyperGraphSolver extends BaseSolver {
+ 
+     if (
+       newSameLayerIntersections > 0 &&
+-      this.isKnownSingleLayerRegion(nextRegionId)
++      this.expansionRegionIsKnownSingleLayer
+     ) {
+       return Number.POSITIVE_INFINITY
+     }
+@@ -1437,18 +1541,19 @@ export class TinyHyperGraphSolver extends BaseSolver {
+     const newRegionCost =
+       this.computeRegionCostForRegion(
+         nextRegionId,
+-        regionCache.existingSameLayerIntersections + newSameLayerIntersections,
+-        regionCache.existingCrossingLayerIntersections +
++        this.expansionExistingSameLayerIntersections +
++          newSameLayerIntersections,
++        this.expansionExistingCrossingLayerIntersections +
+           newCrossLayerIntersections,
+-        regionCache.existingEntryExitLayerChanges + newEntryExitLayerChanges,
+-        regionCache.existingSegmentCount + 1,
+-      ) - regionCache.existingRegionCost
++        this.expansionExistingEntryExitLayerChanges + newEntryExitLayerChanges,
++        this.expansionExistingSegmentCount + 1,
++      ) - this.expansionExistingRegionCost
+ 
+     return (
+-      currentCandidate.g +
++      this.expansionCurrentG +
+       newRegionCost +
+-      state.regionCongestionCost[nextRegionId] +
+-      (this.problem.portPenalty?.[neighborPortId] ?? 0)
++      this.expansionRegionCongestionCost +
++      (this.expansionPortPenalty?.[neighborPortId] ?? 0)
+     )
+   }
+ 
+diff --git a/lib/distance-aware-tiny-hypergraph-solver.ts b/lib/distance-aware-tiny-hypergraph-solver.ts
+index a5d9585..7f9a5b5 100644
+--- a/lib/distance-aware-tiny-hypergraph-solver.ts
++++ b/lib/distance-aware-tiny-hypergraph-solver.ts
+@@ -40,10 +40,12 @@ export class DistanceAwareTinyHyperGraphSolver extends TinyHyperGraphSolver {
+     const baseCost = super.computeG(currentCandidate, neighborPortId)
+     if (!Number.isFinite(baseCost)) return baseCost
+ 
++    // super.computeG guarantees the expansion stash matches currentCandidate,
++    // so the current port's coordinates come from the stash instead of two
++    // array reads per neighbor.
+     const { portX, portY } = this.topology
+-    const currentPortId = currentCandidate.portId
+-    const dx = portX[currentPortId]! - portX[neighborPortId]!
+-    const dy = portY[currentPortId]! - portY[neighborPortId]!
++    const dx = this.expansionCurrentPortX - portX[neighborPortId]!
++    const dy = this.expansionCurrentPortY - portY[neighborPortId]!
+     return baseCost + __h2(dx, dy) * this.DISTANCE_TO_COST
+   }
+ 

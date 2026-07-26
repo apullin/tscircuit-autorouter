@@ -80,6 +80,17 @@ rm+cp also works. Never edit in place.
   exactly 1973601 (both unchanged), DRC 0/41, repo tsc clean;
   IndexedCandidateHeap constructor signature changed (portCount +
   incidentPortRegion) — no external constructions found in either repo.
+- bun-tiny-hypergraph-g3-hoist.patch — **identity-safe, apply AFTER the r1
+  patch** (2026-07-26, G3): computeG invariants hoisted per dequeued candidate
+  via predeclared class fields populated before the neighbor loop (regionCache
+  + its 5 fields, current-port angle incl. region-side ternary, currentPortZ,
+  single-layer mask, congestion, candidate.g, portPenalty array ref, portX/Y
+  for the DistanceAware subclass); regionArea precomputed at construction;
+  viaSizeWithMarginSq lifted to module consts with an === guard routing
+  non-default diameters through the original expression. Self-repopulating
+  guard (expansionCandidate !== currentCandidate) keeps any unlisted call
+  path identical. Verified: s5 1053687 / s8 1973601 iterations EXACT, DRC
+  0/41, repo tsc clean.
 - bun-high-density-a01@0.0.36.patch — fillViaOccupants inlined + single-entry
   occupancy-version cache (A03 2.2x micro on dataset01 sample001), stepOnce /
   computeMoveCostAndRips invariant hoisting. Bit-identical outputs.
