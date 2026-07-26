@@ -57,6 +57,19 @@ perf-audit-2026-07-23.md. Baselines: main @ v0.0.714 (b7b243cc), 64-thread x86, 
      perf PRs (branch hazard fixed — perf/geometry-hot-path LACKS the collinearity fix;
      use perf/parametric-segment-distance, 140/140 tests, pushed), autorouter growth-cap
      fix, 3 drafted issues (failure-cache key, cross-node margin, scaleRoute thickness).
+  8. **G3 computeG invariant hoisting (3dd20cc4): bit-identical on both anchors** (s5
+     1053687 / s8 1973601 exact, DRC 0/41); 17 predeclared stash fields populated per
+     dequeue + self-repopulate guard; single-run walls flat (38.0/96.1s) — effect inside
+     noise, gauntlet resolves.
+  9. **RUST GATE-A MACHINERY PROVEN (9b8eef54): replay-parity core, 1222/1222 nodes /
+     91,650 candidates / 0 mismatches on srj18 sample 8.** Zero-dep Rust cdylib mirrors
+     the verified P2 replay winner selection (per-line citations); RPLYDS01 dataset format
+     with bit-exact schedule-grid decimation (37.6MB for sample 8); flag-gated capture
+     hook (TS_REPLAY_DUMP); bun:ffi harness; release build 0.55s. Semantics correction
+     found during extraction: candidate g is the portfolio override family
+     (iterations/1e6 for A01/A03, 1000+…/1e4 for polyline, iterations/1e4 default), NOT
+     the base iterations/MAX_ITERATIONS. Next: port one candidate class to Rust threads
+     and race under this exact selection (RUST-PLAN Gates A/B).
   NOTE the exp/rewrites results that were only in commit messages (HD-nodes numbers, R1
   drop-one gate, proven defects, wavefront calibration, salvage rejection) are summarized
   in REVIEW-2026-07-26.md §3 — treat that section as WINS-grade recorded data.
