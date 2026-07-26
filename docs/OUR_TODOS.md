@@ -67,9 +67,13 @@ perf-artifacts/kernel-inventory.md (accelerator analysis).
       MultiHeadPolyLine per-pair rebuild hoisting, objectHash/structuredClone→JSON key+manual clone,
       HighDensityRouteSpatialIndex numeric keys/generation-stamp/per-route buckets. Deferred (not
       result-identity-safe): candidates.shift()→priority queue in the polyline solver.
-- [ ] **B6. Math.hypot→sqrt: BLOCKED by result-identity.** 8x micro win on the primitive, ~2-4% profile,
-      but ulp differences flip A* tie-breaks on real boards (3 SVG snapshot tests fail). Only viable as a
-      quality-gated experiment WITH snapshot updates, not as a silent perf change. Parked.
+- [x] ~~B6. Math.hypot→sqrt: BLOCKED by result-identity~~ — **2026-07-26: ACTIVATED, quality-gated.**
+      Round 4 measured it (1.054x corpus, srj18 DRC 581→575, all dataset01 boards identical) but the
+      live tree had silently lost the edit — it survived only as docs/tiny-hypergraph-hypot.patch.
+      Re-applied 2026-07-26 as perf-patches/bun-tiny-hypergraph-hypot.patch (kept SEPARATE from the
+      identity-safe tiny-hypergraph patch), snapshots updated for the churned tests. New sample-5
+      identity anchor: iterations 1053687 (was 1048233). One Math.hypot deliberately remains
+      (selective-rerip :455, outside the measured 13-site swap — see G/R5).
 - [ ] **B7. math-utils scalar kernels — MOSTLY BLOCKED by result-identity (2026-07-24 analysis).
       Squared-distance comparisons (d2 < p*p vs sqrt(d2) < p) diverge at boundary ties in ulps →
       float-nonidentical → same class as the reverted hypot swap. The only bit-identical piece:
@@ -156,8 +160,50 @@ perf-artifacts/kernel-inventory.md (accelerator analysis).
       setsid; a session crash killed it once). Lesson: staggered starts break load symmetry → run2 noisy.
 - [ ] **F4. Automate the Tier-1 subset as a one-command A/B** (`--sample-numbers 5,8,10`) with
       before/after table output. Currently hand-assembled per agent.
-- [ ] **F5. Consider upstreaming the perf work as PRs** to tscircuit/tscircuit-autorouter.
+- [x] ~~F5. Consider upstreaming the perf work as PRs~~ — **2026-07-26: STAGED, awaiting user
+      trigger.** Three PRs (math-utils correctness, math-utils perf, autorouter growth-cap fix) and
+      three issues (failure-cache key, cross-node margin, scaleRoute thickness) are one-command
+      ready in PR-STAGING.md + perf-artifacts/pr-staging/. Branch hazard fixed: PR 2 must come from
+      perf/parametric-segment-distance (contains the fix), NOT perf/geometry-hot-path. The stack
+      itself should upstream later as a curated series, not a megabranch.
 - [ ] **F6. bun node_modules hardlink hazard — document for all agents.** bun hardlinks installed files
       into ~/.bun/install/cache and across worktrees. NEVER edit node_modules in place: apply changes via
       `patch` (replaces file, breaks link) or rm+cp first. Round 3 hit this: npm-package edits leaked into
       the cache + 6 worktrees; restored via /tmp/checks-r3 orig snapshots + GH cache copies.
+
+## G. Round 5 frontier (2026-07-26, from the second-opinion review — see REVIEW-2026-07-26.md)
+
+- [ ] **G1/R1. tiny-hypergraph compact-hop typed arrays** (M, identity-SAFE, ~2-4% wall). Every port
+      has exactly 2 incident regions (loadSerializedHyperGraph.ts:404 throws otherwise) ⇒
+      hopId' = portId*2+side; replaces the sparse-mode Maps (core.ts:399-404/640-671) and the heap's
+      indexByHopId Map + closedHopIds Set with typed arrays + generation stamps. The reason sparse
+      mode exists (portCount×regionCount blowup) vanishes.
+- [ ] **G2/R2. Kill per-neighbor candidate allocation** (S then M, safe). Step A: hoist the dominance
+      check (core.ts:613-614) above the object literal (:598-606); delete dead goal branch :608-611.
+      Step B: SoA candidate pool (proven pattern). R1+R2B ≈ one expansion-core rewrite, ~3.5-6% of
+      s8 wall.
+- [ ] **G3/R3. Hoist per-dequeued-candidate invariants across the neighbor loop in computeG**
+      (M, safe if op order preserved, ~2-3.5% wall): regionCache + 5 fields, port angle, z, congestion,
+      viaSizeWithMarginSq rebuilt per call (computeRegionCost.ts:46-47). Mind the GreedyFinalRoute
+      subclass seam (core.ts:1508-1515).
+- [ ] **G4/R4. countNewIntersectionsWithValues tuple→packed int** (S, safe, ~0.5-1.3% wall).
+- [ ] **G5/R5. Blocker-search churn** (M, ~1.3-2.6% wall): getPortOwners() rebuilt twice per failure
+      with unchanged state (selective-rerip :196/:231→:334 — the second rebuild is R6, S-sized);
+      owner Sets → insertion-ordered arrays + bitset. CAUTION: [...owners] order feeds rip order —
+      a bare bitset is NOT identity-safe. Also the one remaining Math.hypot (:455).
+- [ ] **G6. Eviction + re-path of over-committed nodes — THE algorithmic lever.** Doomed nodes are
+      over-committed, not unroutable (40/40 rescued by one removal, 77% of removals work). Evicting
+      one net to a neighbor node at the assignment level attacks: the 68-88% wasted HD search, the
+      62.5s straggler bounding the parallel ceiling (s6), the 69% cross-node violations AND the 48x
+      grown-node DRC enrichment. Speed + quality + parallel ceiling in one move. Design-first.
+- [ ] **G7. Runtime A/B: node/V8 (and browser) vs bun/JSC.** Every campaign number is bun/JSC;
+      downstream users run Node and browsers. One A/B of the published dist under node vs bun on
+      samples 5/8 could reshuffle priorities (megamorphic solver code JITs very differently).
+      lib/parallel/* is Bun-API-only — needs a node/web-worker port before users benefit from A2/HD-nodes.
+- [ ] **G8. Growth-ladder corpus gate.** GROWTH_SCHEDULE="1.2,2,4,8" (exp/rewrites f354b3c2, NOT
+      landed on the stack) moved s8 to 133s/31 DRC and s6 to 344s/98 vs 123s/45 and 268s/99 —
+      a real quality/speed trade needing a full two-corpus gate as its own experiment.
+- [ ] **G9. HD-node + A2 parallelism productization**: on-by-default for CLI/server single-board
+      routes (memory budget permitting), off for benchmark throughput runs and browser. Needs the
+      per-node bookkeeping gaps closed (recordNodeSolveMetadata etc. skipped on the parallel path)
+      and a worker-cache determinism decision (see issue-failure-cache).

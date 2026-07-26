@@ -1,5 +1,18 @@
 # HANDOFF — tscircuit autorouter performance work (2026-07-23/24)
 
+> **CONSOLIDATION UPDATE (2026-07-26)** — a second-opinion review session (Claude Code /
+> Fable 5) audited the whole campaign and then consolidated it. Read these in order:
+> **REVIEW-2026-07-26.md** (findings: A2 pool bug fixed, hypot patch was dormant, stack
+> was not self-contained, exp/rewrites results unrecorded), **WINS.md** top entry
+> (what was verified/measured on 2026-07-26), **RUST-PLAN.md** (evidence-ranked native
+> plan), **PR-STAGING.md** (3 upstream PRs + 3 issues, one command each, awaiting user
+> trigger). Current state: perf-ts-stack = v0.0.718 + 46 commits, self-contained
+> patchedDependencies + perf-patches/ (identity-safe tier, hypot quality-gated tier,
+> round-5 tier), TS_PARALLEL_A2 + TS_PARALLEL_HD_NODES both landed default-off and
+> parity-gated. **Sample-5 identity anchor is now 1053687 iterations** (hypot activation
+> legally moved it from 1048233); sample-8 anchor 1973601. The 2 suite failures
+> (bugreport36, dip16) are upstream v0.0.714→717 drift — do not "fix" them locally.
+
 > **UPSTREAM DEPENDENCY UPDATE (2026-07-24, latest)** — the largest remaining lever was NOT in this
 > repo. A fresh CPU profile of the tail board (srj18 sample 6, 352s) attributes **24% of total wall
 > to @tscircuit/math-utils** (`pointToSegmentDistance` 14.5% alone), versus 19% for the repo's HD A*

@@ -5,6 +5,50 @@ perf-audit-2026-07-23.md. Baselines: main @ v0.0.714 (b7b243cc), 64-thread x86, 
 
 ## Confirmed
 
+- **2026-07-26 — CONSOLIDATION SESSION (second-opinion review + fixes; full detail in
+  REVIEW-2026-07-26.md, RUST-PLAN.md, PR-STAGING.md).** perf-ts-stack rebased onto v0.0.718
+  (zero conflicts) and now carries 5 new commits (36c8ce8f, 02cb1895, 1ddd6e00, 7c716eda,
+  3fe64aa7). Measured/verified facts:
+  1. **Independent verification of the stack (pre-session state)**: s5 interleaved A/B ×2,
+     main 54.95/51.95s vs stack 39.36/40.43s = **1.34x**, iterations 1048233 identical on
+     all four runs, DRC 0. The 2 suite failures (bugreport36, dip16) **proven upstream
+     drift**: pass on v0.0.714, fail on unmodified v0.0.717 — not campaign damage.
+  2. **A2 pool bug (HIGH) found and fixed (36c8ce8f)**: on a branch failure the pool
+     abandoned a still-computing worker and could serve its late SAB write as the NEXT
+     board's broad result. Fix: any-throw destroys the pool + dispatch-time health guard +
+     error/close listeners (kills the infinite-poll-on-load-failure hang too). Failure path:
+     3 consecutive garbage-task calls throw cleanly in ~110ms each, fresh pool per call.
+     Happy path: s12 seq vs TS_PARALLEL_A2=1 — DRC 11=11, every stage's iterations equal
+     except stage 21's own pump count (41 vs 1, structural).
+  3. **Round-4 hypot→sqrt was DORMANT in the live tree** — every run since some point after
+     round 4 (incl. item 1 above) EXCLUDED it; it survived only as docs/tiny-hypergraph-hypot.patch.
+     Re-activated (7c716eda) as perf-patches/bun-tiny-hypergraph-hypot.patch. **New s5
+     identity anchor: 1053687** (was 1048233); snapshot churn exactly as B6 predicted
+     (bugreport51/58/60 updated); suite 421 pass / 2 fail (the upstream-drift pair).
+  4. **TS_PARALLEL_HD_NODES landed on the stack (1ddd6e00)** — ported from exp/rewrites
+     f354b3c2 WITHOUT the bundled GROWTH_SCHEDULE default change (that goes to its own
+     corpus gate, OUR_TODOS G8), hdNodePool hardened with the a2 lifecycle pattern.
+     Parity gate on the stack: s8 seq 101.10s / DRC 41 vs par4 89.08s / DRC 41 = **1.13x
+     @4 workers, DRC-identical** (exp/rewrites had measured 1.46x/1.82x against its own
+     slower baseline; s6 — the 1.82x board — pending the next gauntlet).
+  5. **Stack made self-contained (02cb1895)**: perf-patches/ restored (was dropped in the
+     rebase — patchedDependencies pointed at nonexistent files), math-utils win captured as
+     a real bun patchedDependency (was ONLY a hand-patched dist that `bun install` would
+     silently revert; round-trip verified byte-exact against the archived dists).
+  6. **Round-5 small wins (3fe64aa7, from the recovered portPointPathing analysis)**: R2a
+     dominance-before-allocation in the A* expansion loop (+dead goal branch removed), R4
+     packed-int countNewIntersections (tuple allocation gone from both hot call sites), R6
+     shared getPortOwners between direct+alternate blocker searches. **Identity exact: s5
+     1053687, s8 1973601 iterations both unchanged**, DRC 0/41 unchanged, wall s8
+     101.1→99.8s (single run, noise-level — structural wins; gauntlet will resolve).
+  7. **Upstream PRs/issues staged, not fired** (PR-STAGING.md): math-utils correctness +
+     perf PRs (branch hazard fixed — perf/geometry-hot-path LACKS the collinearity fix;
+     use perf/parametric-segment-distance, 140/140 tests, pushed), autorouter growth-cap
+     fix, 3 drafted issues (failure-cache key, cross-node margin, scaleRoute thickness).
+  NOTE the exp/rewrites results that were only in commit messages (HD-nodes numbers, R1
+  drop-one gate, proven defects, wavefront calibration, salvage rejection) are summarized
+  in REVIEW-2026-07-26.md §3 — treat that section as WINS-grade recorded data.
+
 - **2026-07-25 — REJECTED: exact grid coordinates + future-point memo.** No speed, mixed quality.
   Hypothesis (good one, and it was structurally real): the HD A* explores on a QUANTIZED cell key
   (`getPackedNodeKey` rounds to cellStep) but computes costs on RAW coordinates built by
@@ -294,3 +338,58 @@ Sequential, quiet box: main ×2 → each branch ×2 (srj18 full) + dataset01 ×1
 perf/combined → ×2 + full test suite → compare via perf-artifacts/compare-results.py.
 Baseline (main, srj18): 11/16 completed, timeouts {2,6,12,14,15}, P50 118.7s.
 Baseline (main, dataset01): 100% completed, 88.2% DRC pass, P50 3.2s, avg 40.04 vias.
+
+## 2026-07-25 - Round 4: attacking the NON-high-density stages
+
+Re-profiling AFTER the round-1..3 wins (handoff lesson #5) showed the campaign had been
+mining a seam that Amdahl had nearly closed. Per-stage wall on the rebased tree:
+
+| stage | sample 8 | sample 6 | previously optimized |
+|---|---|---|---|
+| highDensityRouteSolver | 52.2% | 53.4% | the entire campaign |
+| portPointPathingSolver | 21.7% | 15.6% | no |
+| exactGeometryDrcForceImproveSolver | 10.5% | 17.5% | scoring fix only |
+| traceSimplificationSolver | 7.9% | 5.1% | never read |
+
+Making the HD stage entirely FREE caps at 2.09x (s8) / 2.15x (s6). Two wins from the
+untouched remainder, gated together on both corpora:
+
+- **Math.hypot -> Math.sqrt in tiny-hypergraph** (13 sites). Math.hypot is variadic with
+  overflow guarding and is a slow path in JSC; the 2-arg sqrt form measured 8.3x on the
+  primitive. computeG was the dominant caller (1602 of 3023 hypot samples).
+- **bbox pre-reject in SingleSimplifiedPathSolver5_Deg45** - the constructor scanned every
+  segment of every other route through segmentToBoundsMinDistance, O(routes^2 * segments),
+  4.1% of total wall in one call site. A conservative bbox test skips calls whose result is
+  already determined. Sound by construction.
+
+**Combined: srj18 1704.8s -> 1576.3s (1.082x), dataset01 198.7s -> 188.4s (1.055x).**
+DRC 581 -> 575 on srj18 (samples 8 -4, 7 -2, 15 -1, 6 +1); all 85 dataset01 boards
+identical. 100% completion, 0 timeouts, no board slower. Stacks to ~2.74x vs upstream.
+Test suite 420 pass / 2 fail (both pre-existing).
+
+### Negative results from the same round (measured, do not retry)
+- **Sweeping Math.hypot beyond tiny-hypergraph is worthless.** Rewriting all 61 2-arg sites
+  across high-density-repair03 and @tscircuit/high-density-a01 measured 1.045x/1.048x -
+  statistically identical to the 13-site version, with byte-identical DRC. Reason: those
+  packages ship `dist/` builds with ZERO Math.hypot; the .ts sources are not what runs. The
+  remaining hot callers (viasAreAtSameLocation, checkDifferentNetViaSpacing) live in
+  @tscircuit/checks/dist, which is dist-only.
+- **computeG devirtualization: premise was false.** A scout reported that tiny-hypergraph's
+  base computeG "returns the constant 1". It does not - core.ts:1370 does real work over
+  region-intersection caches and port angles, and already carries a hoisting optimization.
+- **LPT dispatch ordering for node parallelism: neutral.** Sorting the HD node queue by port
+  count (longest-processing-time-first) measured 86s vs 85s and 162s vs 163s, DRC identical.
+  Port count does not predict the straggler well enough at 4 workers.
+
+### Still open, ranked by measured size
+1. **Incremental DRC re-evaluation** (10.5-17.5%). GlobalDrcForceImproveSolver calls
+   getDrcSnapshot per candidate, re-running the full DRC suite over the WHOLE board.
+   Localizing it needs spatial error indexing plus delta tracking, and isBetterDrcSnapshot
+   compares global counts/scores so the scoring contract would have to change. Project-sized.
+2. **Spatial index for the O(routes^2) filtering** - the bbox reject is the 80/20; a shared
+   flatbush over all route segments built once in MultiSimplifiedPathSolver would remove the
+   quadratic term entirely rather than just cheapening it.
+3. **Candidate object allocation** in tiny-hypergraph's A* inner loop (core.ts:607-615),
+   one object per neighbour expansion.
+4. **No dirty-tracking across trace-simplification iterations** - 2 outer loops re-simplify
+   every route even when via removal/merging changed nothing.

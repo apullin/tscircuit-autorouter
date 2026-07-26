@@ -9,7 +9,7 @@ checks (`bun test`, `bunx tsc --noEmit`, `bun run format:check`).
 
 ---
 
-## PR 1 — `fix/orientation-collinear-robustness` (correctness, 1 commit)
+## PR 1 — branch `bugfix/orientation-collinear-robustness` (correctness, 1 commit)
 
 **Title:** Fix colinear segments being reported as intersecting
 
@@ -56,7 +56,17 @@ crossings. 3 fail before the change; suite is 138/138 after.
 
 ---
 
-## PR 2 — `perf/geometry-hot-path` (performance, 2 commits)
+## PR 2 — branch `perf/parametric-segment-distance` (performance, 2 commits on top of PR 1)
+
+> **BRANCH CORRECTION (2026-07-26 review):** submit this PR from
+> `perf/parametric-segment-distance` (d3de325 = the two perf commits stacked ON
+> the PR-1 fix; 140/140 tests; its tree byte-matches the dist that every
+> downstream measurement used). Do NOT use `perf/geometry-hot-path` (4dbd011):
+> it carries the same two perf commits but is based directly on v0.0.36 and
+> **lacks the collinearity fix and its regression tests** — merging it alone
+> would reintroduce the PR-1 bug. Mark PR 2 as stacked on PR 1 (it contains
+> PR 1's commit; rebase-merge PR 1 first and PR 2 reduces to the two perf
+> commits).
 
 **Title:** Remove per-call allocations and use a parametric solve for segment distance
 
@@ -115,6 +125,8 @@ cd ~/personal/math-utils-fix && bun test && bunx tsc --noEmit && bun run format:
 # downstream A/B (autorouter checkout at ~/personal/awt-r3):
 /tmp/ab-mathutils.sh          # 2x2 interleaved, sample 6
 /tmp/tier1-mu.sh              # 5-board tier-1 with DRC/via parity
+# /tmp is volatile; durable copies of both scripts:
+#   ~/personal/tscircuit-autorouter/perf-artifacts/tmp-rescue-2026-07-26/
 ```
 
 Prebuilt dists for both arms are archived at
