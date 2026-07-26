@@ -676,6 +676,21 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
       },
     )
 
+    if (typeof process !== "undefined" && process.env.TS_REPLAY_DUMP) {
+      // Replay-parity capture (see native/replay-core/README.md): dumps this
+      // node's per-candidate trajectories in RPLYDS01 format at process exit.
+      // Lazy require keeps the main build free of any native/ dependency.
+      const {
+        recordReplayDump,
+      } = require("../../../native/replay-core/captureDump")
+      recordReplayDump({
+        nodeId: String(this.nodeWithPortPoints.capacityMeshNodeId ?? ""),
+        nodeSegmentCount: this.getNodeSegmentCount(),
+        initialCount,
+        capturedWinnerIndex: outcome.winnerIndex ?? -1,
+        results: outcome.results,
+      })
+    }
     if (outcome.winnerIndex !== null && outcome.routes) {
       this.solvedRoutes = outcome.routes
       this.solved = true

@@ -1,0 +1,15 @@
+[package]
+name = "replay-core"
+version = "0.1.0"
+edition = "2021"
+
+# Zero dependencies on purpose: `cargo build --release` must work fully
+# offline (the benchmark box builds centrally; no network fetch risk).
+# Build profile mirrors ../../../awt-r3/native/hdastar/Cargo.toml.
+
+[lib]
+name = "replay_core"
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+debug = true

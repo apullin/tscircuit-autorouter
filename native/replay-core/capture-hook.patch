@@ -1,0 +1,46 @@
+Capture hook for the replay-parity spike (native/replay-core, RUST-PLAN.md §1).
+
+Adds a TS_REPLAY_DUMP-gated dump call to PortfolioSingleIntraNodeSolver's
+parallelReplayStep, immediately after runReplayRace() returns — the exact
+point where all candidate trajectories are complete and the live TS replay
+winner is known. 15 added lines, one file, zero behavior change when the env
+var is unset. The heavy lifting lives in native/replay-core/captureDump.ts
+(lazy require, so the main build gains no import edge).
+
+Apply from the worktree root (/home/pullin/personal/awt-perf-stack):
+
+    git apply native/replay-core/capture-hook.patch
+
+Revert:
+
+    git apply -R native/replay-core/capture-hook.patch
+
+diff --git a/lib/solvers/HyperHighDensitySolver/PortfolioSingleIntraNodeSolver.ts b/lib/solvers/HyperHighDensitySolver/PortfolioSingleIntraNodeSolver.ts
+--- a/lib/solvers/HyperHighDensitySolver/PortfolioSingleIntraNodeSolver.ts
++++ b/lib/solvers/HyperHighDensitySolver/PortfolioSingleIntraNodeSolver.ts
+@@ -672,10 +672,25 @@
+       {
+         workers,
+         nodeSegmentCount: this.getNodeSegmentCount(),
+         initialCount,
+       },
+     )
+
++    if (typeof process !== "undefined" && process.env.TS_REPLAY_DUMP) {
++      // Replay-parity capture (see native/replay-core/README.md): dumps this
++      // node's per-candidate trajectories in RPLYDS01 format at process exit.
++      // Lazy require keeps the main build free of any native/ dependency.
++      const {
++        recordReplayDump,
++      } = require("../../../native/replay-core/captureDump")
++      recordReplayDump({
++        nodeId: String(this.nodeWithPortPoints.capacityMeshNodeId ?? ""),
++        nodeSegmentCount: this.getNodeSegmentCount(),
++        initialCount,
++        capturedWinnerIndex: outcome.winnerIndex ?? -1,
++        results: outcome.results,
++      })
++    }
+     if (outcome.winnerIndex !== null && outcome.routes) {
+       this.solvedRoutes = outcome.routes
+       this.solved = true
