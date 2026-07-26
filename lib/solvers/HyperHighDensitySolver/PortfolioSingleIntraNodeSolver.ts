@@ -691,6 +691,23 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
         results: outcome.results,
       })
     }
+    if (typeof process !== "undefined" && process.env.TS_GOLDEN_DUMP) {
+      // Golden per-candidate capture for the Rust portfolio port
+      // (native/PORT-SPEC.md): JSON-lines file, one shared-input line per
+      // node then one line per candidate, all candidate classes included.
+      // Lazy require keeps the main build free of any native/ dependency.
+      const {
+        recordGoldenDump,
+      } = require("../../../native/replay-core/goldenDump")
+      recordGoldenDump({
+        nodeId: String(this.nodeWithPortPoints.capacityMeshNodeId ?? ""),
+        nodeSegmentCount: this.getNodeSegmentCount(),
+        initialCount,
+        winnerIndex: outcome.winnerIndex ?? -1,
+        constructorParams,
+        results: outcome.results,
+      })
+    }
     if (outcome.winnerIndex !== null && outcome.routes) {
       this.solvedRoutes = outcome.routes
       this.solved = true
