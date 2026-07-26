@@ -128,6 +128,11 @@ export class SingleSimplifiedPathSolver5 extends SingleSimplifiedPathSolver {
         return false
       })
 
+    const rejectMinX = bounds.minX - routeSegmentMargin
+    const rejectMaxX = bounds.maxX + routeSegmentMargin
+    const rejectMinY = bounds.minY - routeSegmentMargin
+    const rejectMaxY = bounds.maxY + routeSegmentMargin
+
     this.filteredObstaclePathSegments = this.otherHdRoutes.flatMap(
       (hdRoute) => {
         if (
@@ -141,9 +146,20 @@ export class SingleSimplifiedPathSolver5 extends SingleSimplifiedPathSolver {
 
         const route = hdRoute.route
         const segments: Array<[Point, Point]> = []
+        // Conservative bbox reject before the exact solve. If the segment's
+        // bounding box, grown by routeSegmentMargin, misses `bounds` entirely
+        // then every point on the segment is further than the margin from
+        // `bounds`, so the exact distance cannot pass the test below. This
+        // constructor runs once per route and scans ALL other routes, so the
+        // exact call was O(routes^2 * segments) and dominated the stage.
         for (let i = 0; i < route.length - 1; i++) {
           const start = route[i]
           const end = route[i + 1]
+
+          if (start.x < rejectMinX && end.x < rejectMinX) continue
+          if (start.x > rejectMaxX && end.x > rejectMaxX) continue
+          if (start.y < rejectMinY && end.y < rejectMinY) continue
+          if (start.y > rejectMaxY && end.y > rejectMaxY) continue
 
           if (
             segmentToBoundsMinDistance(start, end, bounds) <= routeSegmentMargin
