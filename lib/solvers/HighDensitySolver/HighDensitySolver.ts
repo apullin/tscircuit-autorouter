@@ -9,6 +9,12 @@ import type {
   NodeWithPortPoints,
 } from "../../types/high-density-types"
 import type { Obstacle } from "../../types/srj-types"
+import {
+  type HdNodePool,
+  destroyHdNodePool,
+  getHdNodePool,
+  parallelHdNodesEnabled,
+} from "../../parallel/hdNodePool"
 import { BaseSolver } from "../BaseSolver"
 import {
   DEFAULT_MAX_GROWTH_ATTEMPTS,
@@ -63,6 +69,10 @@ export class HighDensitySolver extends BaseSolver {
   growShrinkFallbackToInvalidGeometryOnFailure: boolean
 
   failedSolvers: HighDensityIntraNodeSolver[]
+  private nodePool: HdNodePool | null = null
+  private parallelFailedNodeIds: string[] = []
+  private dispatchedNodes = new Map<string, NodeWithPortPoints>()
+  private solvedNodeIds = new Set<string>()
   activeSubSolver: HighDensityIntraNodeSolver | null = null
   connMap?: ConnectivityMap
   nodePfById: Map<CapacityMeshNodeId, number | null>
@@ -278,10 +288,25 @@ export class HighDensitySolver extends BaseSolver {
   private getSolvedRoutesWithTerminalPcbPortIds(
     solver: HighDensityIntraNodeSolver,
   ): HighDensityIntraNodeRoute[] {
-    const terminalPortPoints = solver.nodeWithPortPoints.portPoints.filter(
+    return this.annotateRoutesWithTerminalPcbPortIds(
+      solver.nodeWithPortPoints,
+      solver.solvedRoutes,
+    )
+  }
+
+  /**
+   * Same terminal-id annotation, reachable without a solver instance so the
+   * node-parallel path (which only gets serialized routes back from a worker)
+   * produces identical output to the sequential path.
+   */
+  private annotateRoutesWithTerminalPcbPortIds(
+    nodeWithPortPoints: NodeWithPortPoints,
+    solvedRoutes: HighDensityIntraNodeRoute[],
+  ): HighDensityIntraNodeRoute[] {
+    const terminalPortPoints = nodeWithPortPoints.portPoints.filter(
       (portPoint) => portPoint.pcb_port_id !== undefined,
     )
-    if (terminalPortPoints.length === 0) return solver.solvedRoutes
+    if (terminalPortPoints.length === 0) return solvedRoutes
 
     const getTerminalPcbPortId = (
       route: HighDensityIntraNodeRoute,
@@ -303,7 +328,7 @@ export class HighDensitySolver extends BaseSolver {
       if (!terminal?.pcb_port_id) return undefined
       return terminal.pcb_port_id
     }
-    return solver.solvedRoutes.map((route) => ({
+    return solvedRoutes.map((route) => ({
       ...route,
       startPcbPortId: route.route[0]
         ? getTerminalPcbPortId(route, route.route[0])
@@ -316,10 +341,96 @@ export class HighDensitySolver extends BaseSolver {
   }
 
   /**
+   * NODE-level parallel path (TS_PARALLEL_HD_NODES=N).
+   *
+   * Nodes are independent - each solver receives only its own port points plus
+   * shared read-only context - so they can be solved concurrently in any order.
+   * Keeps every worker fed and drains completed results each step.
+   *
+   * Any throw in this pump destroys the pool (a2Pool lifecycle pattern,
+   * 36c8ce8f): an abandoned in-flight task can still write into its SAB at any
+   * later time, so a pool that survived a throw must never be reused.
+   */
+  private parallelNodeStep(): void {
+    try {
+      if (!this.nodePool) {
+        this.nodePool = getHdNodePool(parallelHdNodesEnabled(), {
+          colorMap: this.colorMap,
+          connMap: this.connMap,
+          viaDiameter: this.viaDiameter,
+          traceWidth: this.traceWidth,
+          obstacleMargin: this.obstacleMargin,
+          effort: this.effort,
+          obstacles: this.obstacles,
+          layerCount: this.layerCount,
+          maxInnerIterationsPerGrowthAttempt:
+            this.growShrinkMaxInnerIterationsPerGrowthAttempt,
+          fallbackToInvalidGeometryOnFailure:
+            this.growShrinkFallbackToInvalidGeometryOnFailure,
+          useGrowShrink: this.useGrowShrinkHighDensityIntraNodeSolver,
+        })
+      }
+      const pool = this.nodePool
+
+      for (const result of pool.poll()) {
+        if (result.solved) {
+          const node = this.dispatchedNodes.get(result.nodeId)
+          const routes = result.routes as HighDensityIntraNodeRoute[]
+          this.routes.push(
+            ...(this.preserveTerminalPcbPortIds && node
+              ? this.annotateRoutesWithTerminalPcbPortIds(node, routes)
+              : routes),
+          )
+          this.dispatchedNodes.delete(result.nodeId)
+          this.solvedNodeIds.add(result.nodeId)
+        } else {
+          this.parallelFailedNodeIds.push(result.nodeId)
+          this.error ??= `Failed to solve node ${result.nodeId}: ${result.error}`
+        }
+      }
+
+      while (this.unsolvedNodePortPoints.length > 0) {
+        const next =
+          this.unsolvedNodePortPoints[this.unsolvedNodePortPoints.length - 1]!
+        if (!pool.tryDispatch(next)) break
+        this.dispatchedNodes.set(next.capacityMeshNodeId, next)
+        this.unsolvedNodePortPoints.pop()
+      }
+
+      // Nothing to hand out and nothing finished: wait on a worker rather than
+      // spinning, so the pump does not exhaust MAX_ITERATIONS while workers run.
+      if (pool.inFlight > 0 && this.unsolvedNodePortPoints.length === 0) {
+        pool.waitForAny(20)
+      } else if (pool.inFlight === pool.size) {
+        pool.waitForAny(5)
+      }
+
+      if (this.unsolvedNodePortPoints.length === 0 && pool.inFlight === 0) {
+        destroyHdNodePool()
+        this.nodePool = null
+        if (this.parallelFailedNodeIds.length > 0) {
+          this.failed = true
+          this.error = `Failed to solve ${this.parallelFailedNodeIds.length} nodes, ${this.parallelFailedNodeIds.slice(0, 5)}. ${this.error ?? ""}`
+          return
+        }
+        this.solved = true
+      }
+    } catch (err) {
+      destroyHdNodePool()
+      this.nodePool = null
+      throw err
+    }
+  }
+
+  /**
    * Each iteration, pop an unsolved node and attempt to find the routes inside
    * of it.
    */
   _step() {
+    if (parallelHdNodesEnabled() > 0) {
+      this.parallelNodeStep()
+      return
+    }
     if (this.activeSubSolver) {
       this.activeSubSolver.step()
       if (this.activeSubSolver.solved) {
