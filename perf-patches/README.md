@@ -66,6 +66,20 @@ rm+cp also works. Never edit in place.
   getPortOwners() between the direct and alternate blocker searches (state
   provably unchanged between them; consumed as ReadonlyMap). Verified:
   sample-5 iterations exactly 1053687 (unchanged), DRC 0, repo tsc clean.
+- bun-tiny-hypergraph-r1-compact-hop.patch — **identity-safe, apply AFTER the
+  r5 patch** (2026-07-26, the round-5 headline structural win): every port has
+  exactly 2 incident regions (loader guarantees it), so the A* hop space is
+  2·portCount, not portCount·regionCount. getHopId becomes portId*2+side
+  (throws on a non-incident region, per fail-loud policy); the sparse-mode
+  Maps for best-cost/generation become Float64Array+Uint32Array; the heap's
+  indexByHopId Map and closedHopIds Set become Int32Array positions +
+  generation-stamped Uint32Arrays with O(1) clear; compact hopId is cached on
+  each candidate at queue time so sift moves never recompute it (delivers R7).
+  USE_SPARSE_CANDIDATE_STORAGE stays accepted but inert. Heap comparisons and
+  move sequences verbatim. Verified: s5 iterations exactly 1053687 and s8
+  exactly 1973601 (both unchanged), DRC 0/41, repo tsc clean;
+  IndexedCandidateHeap constructor signature changed (portCount +
+  incidentPortRegion) — no external constructions found in either repo.
 - bun-high-density-a01@0.0.36.patch — fillViaOccupants inlined + single-entry
   occupancy-version cache (A03 2.2x micro on dataset01 sample001), stepOnce /
   computeMoveCostAndRips invariant hoisting. Bit-identical outputs.

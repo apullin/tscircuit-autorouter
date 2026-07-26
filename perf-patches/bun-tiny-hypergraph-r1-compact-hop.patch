@@ -1,0 +1,353 @@
+diff --git a/lib/core.ts b/lib/core.ts
+index 1a6bc0c..c8f929f 100644
+--- a/lib/core.ts
++++ b/lib/core.ts
+@@ -196,6 +196,14 @@ export interface Candidate {
+   f: number
+   g: number
+   h: number
++
++  /**
++   * Compact hop id cache (portId * 2 + incident-region side), stamped by
++   * IndexedCandidateHeap the first time the candidate is queued so heap sift
++   * moves never recompute it. Pure function of portId and nextRegionId, which
++   * are never mutated. MinHeap-based queues leave it undefined.
++   */
++  hopId?: number
+ }
+ 
+ export interface TinyHyperGraphWorkingState {
+@@ -214,8 +222,15 @@ export interface TinyHyperGraphWorkingState {
+   unroutedRoutes: RouteId[]
+ 
+   candidateQueue: MinHeap<Candidate>
+-  candidateBestCostByHopId: Float64Array | Map<HopId, number>
+-  candidateBestCostGenerationByHopId: Uint32Array | Map<HopId, number>
++  /**
++   * Dense per-hop best-cost storage indexed by the compact hop id
++   * (portId * 2 + incident-region side, see getHopId). A slot only holds a
++   * valid best cost when its generation stamp matches
++   * candidateBestCostGeneration; a stale stamp means "no best cost"
++   * (+Infinity).
++   */
++  candidateBestCostByHopId: Float64Array
++  candidateBestCostGenerationByHopId: Uint32Array
+   candidateBestCostGeneration: number
+ 
+   goalPortId: PortId
+@@ -370,6 +385,13 @@ export class TinyHyperGraphSolver extends BaseSolver {
+ 
+   RIP_CONGESTION_REGION_COST_FACTOR = 0.1
+   USE_LAZY_ROUTE_HEURISTIC = false
++  /**
++   * Accepted for API compatibility but inert: best-cost storage is always
++   * dense typed arrays now. Compact hop ids (portId * 2 + incident-region
++   * side) shrink the hop space to 2 * portCount, so the dense arrays are
++   * strictly smaller and faster than the sparse Maps this flag used to select
++   * over the wide portId * regionCount + regionId hop space.
++   */
+   USE_SPARSE_CANDIDATE_STORAGE = false
+ 
+   override MAX_ITERATIONS = 1e6
+@@ -397,12 +419,14 @@ export class TinyHyperGraphSolver extends BaseSolver {
+       currentRouteNetId: undefined,
+       unroutedRoutes: range(problem.routeCount),
+       candidateQueue: new MinHeap([], compareCandidatesByF),
+-      candidateBestCostByHopId: this.USE_SPARSE_CANDIDATE_STORAGE
+-        ? new Map()
+-        : new Float64Array(topology.portCount * topology.regionCount),
+-      candidateBestCostGenerationByHopId: this.USE_SPARSE_CANDIDATE_STORAGE
+-        ? new Map()
+-        : new Uint32Array(topology.portCount * topology.regionCount),
++      // Sized by the compact hop space: every port has exactly two incident
++      // regions, so 2 * portCount covers every reachable (port, nextRegion)
++      // hop. USE_SPARSE_CANDIDATE_STORAGE is intentionally ignored here — see
++      // its declaration.
++      candidateBestCostByHopId: new Float64Array(topology.portCount * 2),
++      candidateBestCostGenerationByHopId: new Uint32Array(
++        topology.portCount * 2,
++      ),
+       candidateBestCostGeneration: 1,
+       goalPortId: -1,
+       ripCount: 0,
+@@ -623,14 +647,7 @@ export class TinyHyperGraphSolver extends BaseSolver {
+     const { state } = this
+ 
+     if (state.candidateBestCostGeneration === 0xffffffff) {
+-      if (state.candidateBestCostByHopId instanceof Map) {
+-        state.candidateBestCostByHopId.clear()
+-      }
+-      if (state.candidateBestCostGenerationByHopId instanceof Map) {
+-        state.candidateBestCostGenerationByHopId.clear()
+-      } else {
+-        state.candidateBestCostGenerationByHopId.fill(0)
+-      }
++      state.candidateBestCostGenerationByHopId.fill(0)
+       state.candidateBestCostGeneration = 1
+       return
+     }
+@@ -640,39 +657,35 @@ export class TinyHyperGraphSolver extends BaseSolver {
+ 
+   getCandidateBestCost(hopId: HopId) {
+     const { state } = this
+-    const bestCostGeneration = state.candidateBestCostGenerationByHopId
+-
+-    return (bestCostGeneration instanceof Map
+-      ? bestCostGeneration.get(hopId)
+-      : bestCostGeneration[hopId]) === state.candidateBestCostGeneration
+-      ? state.candidateBestCostByHopId instanceof Map
+-        ? state.candidateBestCostByHopId.get(hopId)!
+-        : state.candidateBestCostByHopId[hopId]!
++
++    return state.candidateBestCostGenerationByHopId[hopId] ===
++      state.candidateBestCostGeneration
++      ? state.candidateBestCostByHopId[hopId]!
+       : Number.POSITIVE_INFINITY
+   }
+ 
+   setCandidateBestCost(hopId: HopId, bestCost: number) {
+     const { state } = this
+ 
+-    if (state.candidateBestCostGenerationByHopId instanceof Map) {
+-      state.candidateBestCostGenerationByHopId.set(
+-        hopId,
+-        state.candidateBestCostGeneration,
+-      )
+-    } else {
+-      state.candidateBestCostGenerationByHopId[hopId] =
+-        state.candidateBestCostGeneration
+-    }
+-
+-    if (state.candidateBestCostByHopId instanceof Map) {
+-      state.candidateBestCostByHopId.set(hopId, bestCost)
+-    } else {
+-      state.candidateBestCostByHopId[hopId] = bestCost
+-    }
++    state.candidateBestCostGenerationByHopId[hopId] =
++      state.candidateBestCostGeneration
++    state.candidateBestCostByHopId[hopId] = bestCost
+   }
+ 
++  /**
++   * Compact hop id: every port has exactly two incident regions (the loader
++   * assigns exactly [region1Index, region2Index] and throws otherwise), so
++   * hop ids are portId * 2 plus which side of the port nextRegionId is on.
++   * This keeps the hop space dense at 2 * portCount, small enough for the
++   * typed-array best-cost storage and the indexed candidate heap.
++   */
+   getHopId(portId: PortId, nextRegionId: RegionId): HopId {
+-    return portId * this.topology.regionCount + nextRegionId
++    const incidentRegions = this.topology.incidentPortRegion[portId]!
++    if (nextRegionId === incidentRegions[0]) return portId * 2
++    if (nextRegionId === incidentRegions[1]) return portId * 2 + 1
++    throw new Error(
++      `getHopId: region ${nextRegionId} is not incident to port ${portId} (incident regions: ${incidentRegions.join(", ")})`,
++    )
+   }
+ 
+   getStartingNextRegionId(
+diff --git a/lib/distance-aware-tiny-hypergraph-solver.ts b/lib/distance-aware-tiny-hypergraph-solver.ts
+index b2c0f7e..a5d9585 100644
+--- a/lib/distance-aware-tiny-hypergraph-solver.ts
++++ b/lib/distance-aware-tiny-hypergraph-solver.ts
+@@ -28,7 +28,8 @@ export class DistanceAwareTinyHyperGraphSolver extends TinyHyperGraphSolver {
+   override _setup(): void {
+     super._setup()
+     this.state.candidateQueue = new IndexedCandidateHeap(
+-      this.topology.regionCount,
++      this.topology.portCount,
++      this.topology.incidentPortRegion,
+     ) as unknown as TinyHyperGraphWorkingState["candidateQueue"]
+   }
+ 
+diff --git a/lib/indexed-candidate-heap.ts b/lib/indexed-candidate-heap.ts
+index 53e3096..f41bd6f 100644
+--- a/lib/indexed-candidate-heap.ts
++++ b/lib/indexed-candidate-heap.ts
+@@ -1,4 +1,5 @@
+ import type { Candidate } from "./core"
++import type { RegionId } from "./types"
+ 
+ /**
+  * Candidate queue keyed by the directed hop represented by a candidate.
+@@ -6,13 +7,36 @@ import type { Candidate } from "./core"
+  * A queued hop has at most one entry. A lower-cost candidate replaces the
+  * existing entry in place, and a dequeued hop is closed until the queue is
+  * cleared for the next route search.
++ *
++ * Hops use the compact id portId * 2 + side, where side selects which of the
++ * port's exactly-two incident regions is the candidate's nextRegionId (the
++ * same id space as TinyHyperGraphSolver.getHopId). Heap positions and
++ * closed-ness live in dense typed arrays validated by a generation stamp, so
++ * clear() is O(1) and the heap is safely reused across route searches without
++ * Map/Set bookkeeping in the sift loops.
+  */
+ export class IndexedCandidateHeap {
+   private items: Candidate[] = []
+-  private indexByHopId = new Map<number, number>()
+-  private closedHopIds = new Set<number>()
+-
+-  constructor(private readonly regionCount: number) {}
++  /**
++   * heapIndexByHopId[hopId] = position of the hop's entry in items. Only
++   * meaningful when heapIndexGenerationByHopId[hopId] === generation; -1
++   * marks a hop removed within the current generation (its root entry was
++   * dequeued).
++   */
++  private readonly heapIndexByHopId: Int32Array
++  private readonly heapIndexGenerationByHopId: Uint32Array
++  /** A hop is closed iff closedGenerationByHopId[hopId] === generation. */
++  private readonly closedGenerationByHopId: Uint32Array
++  private generation = 1
++
++  constructor(
++    portCount: number,
++    private readonly incidentPortRegion: RegionId[][],
++  ) {
++    this.heapIndexByHopId = new Int32Array(portCount * 2)
++    this.heapIndexGenerationByHopId = new Uint32Array(portCount * 2)
++    this.closedGenerationByHopId = new Uint32Array(portCount * 2)
++  }
+ 
+   get length(): number {
+     return this.items.length
+@@ -24,16 +48,28 @@ export class IndexedCandidateHeap {
+ 
+   clear(): void {
+     this.items.length = 0
+-    this.indexByHopId.clear()
+-    this.closedHopIds.clear()
++    // Bumping the generation invalidates every position and closed stamp at
++    // once. On wrap, fall back to a full reset so stale stamps from ~4e9
++    // clears ago can never read as current (same scheme as the solver's
++    // candidateBestCostGeneration).
++    if (this.generation === 0xffffffff) {
++      this.heapIndexGenerationByHopId.fill(0)
++      this.closedGenerationByHopId.fill(0)
++      this.generation = 1
++      return
++    }
++    this.generation += 1
+   }
+ 
+   queue(candidate: Candidate): void {
+     const hopId = this.getHopId(candidate)
+-    if (this.closedHopIds.has(hopId)) return
++    if (this.closedGenerationByHopId[hopId] === this.generation) return
+ 
+-    const existingIndex = this.indexByHopId.get(hopId)
+-    if (existingIndex !== undefined) {
++    const existingIndex =
++      this.heapIndexGenerationByHopId[hopId] === this.generation
++        ? this.heapIndexByHopId[hopId]!
++        : -1
++    if (existingIndex !== -1) {
+       const existingCandidate = this.items[existingIndex]!
+       if (candidate.g >= existingCandidate.g) return
+ 
+@@ -48,7 +84,8 @@ export class IndexedCandidateHeap {
+ 
+     const index = this.items.length
+     this.items.push(candidate)
+-    this.indexByHopId.set(hopId, index)
++    this.heapIndexGenerationByHopId[hopId] = this.generation
++    this.heapIndexByHopId[hopId] = index
+     this.siftUp(index)
+   }
+ 
+@@ -56,29 +93,55 @@ export class IndexedCandidateHeap {
+     const bestCandidate = this.items[0]
+     if (!bestCandidate) return undefined
+ 
+-    const bestHopId = this.getHopId(bestCandidate)
+-    this.closedHopIds.add(bestHopId)
+-    this.indexByHopId.delete(bestHopId)
++    // Every item in the heap had its hopId stamped by queue(), and its
++    // position generation stamp is current, so writing -1 marks it absent.
++    const bestHopId = bestCandidate.hopId!
++    this.closedGenerationByHopId[bestHopId] = this.generation
++    this.heapIndexByHopId[bestHopId] = -1
+ 
+     const lastCandidate = this.items.pop()!
+     if (this.items.length > 0) {
+       this.items[0] = lastCandidate
+-      this.indexByHopId.set(this.getHopId(lastCandidate), 0)
++      this.heapIndexByHopId[lastCandidate.hopId!] = 0
+       this.siftDown(0)
+     }
+     return bestCandidate
+   }
+ 
++  /**
++   * Compact hop id (portId * 2 + incident-region side), cached on the
++   * candidate so sift moves never recompute it. Throws when nextRegionId is
++   * not incident to the port — solver call sites run every candidate through
++   * TinyHyperGraphSolver.getHopId before queueing it, so this cannot happen
++   * on loader-built topologies.
++   */
+   private getHopId(candidate: Candidate): number {
+-    return candidate.portId * this.regionCount + candidate.nextRegionId
++    const cachedHopId = candidate.hopId
++    if (cachedHopId !== undefined) return cachedHopId
++
++    const incidentRegions = this.incidentPortRegion[candidate.portId]!
++    let hopId: number
++    if (candidate.nextRegionId === incidentRegions[0]) {
++      hopId = candidate.portId * 2
++    } else if (candidate.nextRegionId === incidentRegions[1]) {
++      hopId = candidate.portId * 2 + 1
++    } else {
++      throw new Error(
++        `IndexedCandidateHeap: region ${candidate.nextRegionId} is not incident to port ${candidate.portId} (incident regions: ${incidentRegions.join(", ")})`,
++      )
++    }
++    candidate.hopId = hopId
++    return hopId
+   }
+ 
+   private siftUp(startIndex: number): void {
+     // Hole-based sift: shift parents down without swapping, place the item
+     // once at its final index. Uses the same comparisons as a swap-based
+-    // sift, so the resulting heap arrangement is identical.
++    // sift, so the resulting heap arrangement is identical. Moved items are
++    // always live heap entries, so their position generation stamps are
++    // already current and only the position needs writing.
+     const items = this.items
+-    const indexByHopId = this.indexByHopId
++    const heapIndexByHopId = this.heapIndexByHopId
+     const item = items[startIndex]!
+     const itemF = item.f
+     let index = startIndex
+@@ -87,16 +150,16 @@ export class IndexedCandidateHeap {
+       const parent = items[parentIndex]!
+       if (parent.f <= itemF) break
+       items[index] = parent
+-      indexByHopId.set(this.getHopId(parent), index)
++      heapIndexByHopId[parent.hopId!] = index
+       index = parentIndex
+     }
+     items[index] = item
+-    indexByHopId.set(this.getHopId(item), index)
++    heapIndexByHopId[item.hopId!] = index
+   }
+ 
+   private siftDown(startIndex: number): void {
+     const items = this.items
+-    const indexByHopId = this.indexByHopId
++    const heapIndexByHopId = this.heapIndexByHopId
+     const item = items[startIndex]!
+     const itemF = item.f
+     const length = items.length
+@@ -114,10 +177,10 @@ export class IndexedCandidateHeap {
+       const smallestChild = items[smallestChildIndex]!
+       if (itemF <= smallestChild.f) break
+       items[index] = smallestChild
+-      indexByHopId.set(this.getHopId(smallestChild), index)
++      heapIndexByHopId[smallestChild.hopId!] = index
+       index = smallestChildIndex
+     }
+     items[index] = item
+-    indexByHopId.set(this.getHopId(item), index)
++    heapIndexByHopId[item.hopId!] = index
+   }
+ }
