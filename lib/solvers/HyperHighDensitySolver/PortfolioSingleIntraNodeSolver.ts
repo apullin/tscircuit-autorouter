@@ -839,6 +839,18 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
   }
 
   override _step() {
+    if (
+      typeof process !== "undefined" &&
+      (Number(process.env.TS_NATIVE_PORTFOLIO ?? 0) || 0) > 0
+    ) {
+      // Rust portfolio runtime (native/portfolio-core, Gate A bit-exact).
+      // Lazy require keeps the main build free of native/ deps.
+      const {
+        nativePortfolioStep,
+      } = require("../../../native/portfolio-core/driver")
+      nativePortfolioStep(this)
+      return
+    }
     if (parallelPortfolioEnabled()) {
       this.parallelRaceStep()
       return
