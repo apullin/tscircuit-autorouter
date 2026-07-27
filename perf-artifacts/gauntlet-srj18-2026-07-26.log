@@ -1,0 +1,144 @@
+Running 16 benchmark tasks across 1 workers (1 solver, 16 scenarios, dataset: srj18)
+[AutoroutingPipelineSolver7_MultiGraph] 100.0% success (1/1) solved sample001 25.7s
+[benchmark] heartbeat 1/16 complete, 14 queued, 1 running
+[benchmark] active worker 1: sample002 3.6s
+[benchmark] heartbeat 1/16 complete, 14 queued, 1 running
+[benchmark] active worker 1: sample002 33.6s
+[benchmark] heartbeat 1/16 complete, 14 queued, 1 running
+[benchmark] active worker 1: sample002 63.6s
+[benchmark] heartbeat 1/16 complete, 14 queued, 1 running
+[benchmark] active worker 1: sample002 93.6s
+[benchmark] heartbeat 1/16 complete, 14 queued, 1 running
+[benchmark] active worker 1: sample002 123.6s
+[AutoroutingPipelineSolver7_MultiGraph] 100.0% success (2/2) solved sample002 150.2s
+[benchmark] heartbeat 2/16 complete, 13 queued, 1 running
+[benchmark] active worker 1: sample003 2.2s
+[AutoroutingPipelineSolver7_MultiGraph] 100.0% success (3/3) solved sample003 14.0s
+[benchmark] heartbeat 3/16 complete, 12 queued, 1 running
+[benchmark] active worker 1: sample004 18.0s
+[benchmark] heartbeat 3/16 complete, 12 queued, 1 running
+[benchmark] active worker 1: sample004 48.0s
+[AutoroutingPipelineSolver7_MultiGraph] 100.0% success (4/4) solved sample004 51.8s
+[AutoroutingPipelineSolver7_MultiGraph] 100.0% success (5/5) solved sample005 21.5s
+[benchmark] heartbeat 5/16 complete, 10 queued, 1 running
+[benchmark] active worker 1: sample006 4.1s
+[benchmark] heartbeat 5/16 complete, 10 queued, 1 running
+[benchmark] active worker 1: sample006 34.1s
+[benchmark] heartbeat 5/16 complete, 10 queued, 1 running
+[benchmark] active worker 1: sample006 64.1s
+[benchmark] heartbeat 5/16 complete, 10 queued, 1 running
+[benchmark] active worker 1: sample006 94.1s
+[benchmark] heartbeat 5/16 complete, 10 queued, 1 running
+[benchmark] active worker 1: sample006 124.1s
+[benchmark] heartbeat 5/16 complete, 10 queued, 1 running
+[benchmark] active worker 1: sample006 154.1s
+[benchmark] heartbeat 5/16 complete, 10 queued, 1 running
+[benchmark] active worker 1: sample006 184.1s
+[benchmark] heartbeat 5/16 complete, 10 queued, 1 running
+[benchmark] active worker 1: sample006 214.1s
+[benchmark] heartbeat 5/16 complete, 10 queued, 1 running
+[benchmark] active worker 1: sample006 244.1s
+[AutoroutingPipelineSolver7_MultiGraph] 100.0% success (6/6) solved sample006 249.8s
+[benchmark] heartbeat 6/16 complete, 9 queued, 1 running
+[benchmark] active worker 1: sample007 22.8s
+[AutoroutingPipelineSolver7_MultiGraph] 100.0% success (7/7) solved sample007 43.8s
+[benchmark] heartbeat 7/16 complete, 8 queued, 1 running
+[benchmark] active worker 1: sample008 8.4s
+[benchmark] heartbeat 7/16 complete, 8 queued, 1 running
+[benchmark] active worker 1: sample008 38.4s
+[benchmark] heartbeat 7/16 complete, 8 queued, 1 running
+[benchmark] active worker 1: sample008 68.4s
+[AutoroutingPipelineSolver7_MultiGraph] 100.0% success (8/8) solved sample008 85.5s
+[benchmark] heartbeat 8/16 complete, 7 queued, 1 running
+[benchmark] active worker 1: sample009 11.9s
+[AutoroutingPipelineSolver7_MultiGraph] 100.0% success (9/9) solved sample009 27.8s
+[benchmark] heartbeat 9/16 complete, 6 queued, 1 running
+[benchmark] active worker 1: sample010 13.8s
+[benchmark] heartbeat 9/16 complete, 6 queued, 1 running
+[benchmark] active worker 1: sample010 43.8s
+[AutoroutingPipelineSolver7_MultiGraph] 100.0% success (10/10) solved sample010 45.6s
+[benchmark] heartbeat 10/16 complete, 5 queued, 1 running
+[benchmark] active worker 1: sample011 27.6s
+[AutoroutingPipelineSolver7_MultiGraph] 100.0% success (11/11) solved sample011 44.2s
+[benchmark] heartbeat 11/16 complete, 4 queued, 1 running
+[benchmark] active worker 1: sample012 12.8s
+[benchmark] heartbeat 11/16 complete, 4 queued, 1 running
+[benchmark] active worker 1: sample012 42.8s
+[benchmark] heartbeat 11/16 complete, 4 queued, 1 running
+[benchmark] active worker 1: sample012 72.8s
+[benchmark] heartbeat 11/16 complete, 4 queued, 1 running
+[benchmark] active worker 1: sample012 102.8s
+[AutoroutingPipelineSolver7_MultiGraph] 100.0% success (12/12) solved sample012 129.3s
+[benchmark] heartbeat 12/16 complete, 3 queued, 1 running
+[benchmark] active worker 1: sample013 1.3s
+[benchmark] heartbeat 12/16 complete, 3 queued, 1 running
+[benchmark] active worker 1: sample013 31.3s
+[benchmark] heartbeat 12/16 complete, 3 queued, 1 running
+[benchmark] active worker 1: sample013 61.3s
+[benchmark] heartbeat 12/16 complete, 3 queued, 1 running
+[benchmark] active worker 1: sample013 91.3s
+[benchmark] heartbeat 12/16 complete, 3 queued, 1 running
+[benchmark] active worker 1: sample013 121.3s
+[AutoroutingPipelineSolver7_MultiGraph] 100.0% success (13/13) solved sample013 122.2s
+[benchmark] heartbeat 13/16 complete, 2 queued, 1 running
+[benchmark] active worker 1: sample014 28.4s
+[benchmark] heartbeat 13/16 complete, 2 queued, 1 running
+[benchmark] active worker 1: sample014 58.4s
+[benchmark] heartbeat 13/16 complete, 2 queued, 1 running
+[benchmark] active worker 1: sample014 88.4s
+[benchmark] heartbeat 13/16 complete, 2 queued, 1 running
+[benchmark] active worker 1: sample014 118.4s
+[benchmark] heartbeat 13/16 complete, 2 queued, 1 running
+[benchmark] active worker 1: sample014 148.4s
+[benchmark] heartbeat 13/16 complete, 2 queued, 1 running
+[benchmark] active worker 1: sample014 178.4s
+[benchmark] heartbeat 13/16 complete, 2 queued, 1 running
+[benchmark] active worker 1: sample014 208.4s
+[AutoroutingPipelineSolver7_MultiGraph] 100.0% success (14/14) solved sample014 229.0s
+[benchmark] heartbeat 14/16 complete, 1 queued, 1 running
+[benchmark] active worker 1: sample015 8.5s
+[benchmark] heartbeat 14/16 complete, 1 queued, 1 running
+[benchmark] active worker 1: sample015 38.5s
+[benchmark] heartbeat 14/16 complete, 1 queued, 1 running
+[benchmark] active worker 1: sample015 68.5s
+[benchmark] heartbeat 14/16 complete, 1 queued, 1 running
+[benchmark] active worker 1: sample015 98.5s
+[benchmark] heartbeat 14/16 complete, 1 queued, 1 running
+[benchmark] active worker 1: sample015 128.5s
+[benchmark] heartbeat 14/16 complete, 1 queued, 1 running
+[benchmark] active worker 1: sample015 158.5s
+[benchmark] heartbeat 14/16 complete, 1 queued, 1 running
+[benchmark] active worker 1: sample015 188.5s
+[benchmark] heartbeat 14/16 complete, 1 queued, 1 running
+[benchmark] active worker 1: sample015 218.5s
+[AutoroutingPipelineSolver7_MultiGraph] 100.0% success (15/15) solved sample015 238.0s
+[benchmark] heartbeat 15/16 complete, 0 queued, 1 running
+[benchmark] active worker 1: sample016 8.9s
+[AutoroutingPipelineSolver7_MultiGraph] 100.0% success (16/16) solved sample016 25.1s
+
+Benchmark Results (1x effort)
+
++---------------------------------------+-------------+--------------------+-----------+----------+----------+---------+
+| Solver                                | Completed % | Relaxed DRC Pass % | Timed Out | P50 Time | P95 Time | Avg Via |
++---------------------------------------+-------------+--------------------+-----------+----------+----------+---------+
+| AutoroutingPipelineSolver7_MultiGraph | 100.0%      | 18.8%              | 0/16      | 48.7s    | 241.0s   | 220.69  |
++---------------------------------------+-------------+--------------------+-----------+----------+----------+---------+
+
+Dataset: srj18
+
+Scenarios: 16
+
+Top solver failure buckets:
+No failures recorded.
+
+Top timeout buckets:
+No failures recorded.
+
+Top failure buckets:
+1. relaxed DRC: pcb_trace_error - 13 samples, 242 occurrences (samples: 2, 3, 4, 6, 7, 8, 9, 11, ...)
+2. relaxed DRC: pcb_pad_trace_clearance_error - 9 samples, 106 occurrences (samples: 2, 4, 6, 8, 12, 13, 14, 15, ...)
+3. relaxed DRC: pcb_via_trace_clearance_error - 9 samples, 74 occurrences (samples: 2, 4, 6, 7, 8, 11, 13, 14, ...)
+4. relaxed DRC: trace_smtpad_accidental_contact - 9 samples, 65 occurrences (samples: 3, 4, 6, 8, 12, 13, 14, 15, ...)
+5. relaxed DRC: pcb_via_clearance_error - 7 samples, 63 occurrences (samples: 6, 8, 11, 12, 13, 14, 15)
+6. relaxed DRC: trace_via_overlap - 4 samples, 8 occurrences (samples: 2, 6, 8, 14)
+Results written to benchmark-result.txt, benchmark-result.json, and benchmark-snapshots.html

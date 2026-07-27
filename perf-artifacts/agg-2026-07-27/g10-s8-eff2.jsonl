@@ -1,0 +1,3 @@
+{"cfg": "mnd2-eff2", }
+{"cfg": "mnd4-eff2", "dataset":"srj18","sample":8,"solved":true,"failed":false,"error":null,"failedStage":null,"iterations":4436815,"wallS":95.8,"drcErrors":"18","evictRepath":"0","targetMinCapacity":0.5,"maxNodeDimension":4,"effort":2,"capacityDepth":8,"meshNodeCount":1267,"highDensityResizeCount":14,"hdStageWallS":32,"evictionStats":null}
+{"cfg": "mnd16-eff2-ctl", "dataset":"srj18","sample":8,"solved":true,"failed":false,"error":null,"failedStage":null,"iterations":4586819,"wallS":127.7,"drcErrors":"21","evictRepath":"0","targetMinCapacity":0.5,"maxNodeDimension":16,"effort":2,"capacityDepth":8,"meshNodeCount":1208,"highDensityResizeCount":19,"hdStageWallS":55.8,"evictionStats":null}

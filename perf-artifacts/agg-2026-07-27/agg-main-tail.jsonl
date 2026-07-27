@@ -1,0 +1,2 @@
+{"sample": 15, "cfg": "main0718", }
+{"sample": 16, "cfg": "main0718", "dataset":"srj18","sample":16,"solved":true,"failed":false,"error":null,"failedStage":null,"iterations":1355304,"wallS":82.2,"drcErrors":"9","evictRepath":"0","targetMinCapacity":0.5,"maxNodeDimension":16,"effort":1,"capacityDepth":8,"meshNodeCount":772,"highDensityResizeCount":3,"hdStageWallS":15.9,"evictionStats":null}
