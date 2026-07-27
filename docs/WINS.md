@@ -49,8 +49,17 @@ perf-audit-2026-07-23.md. Baselines: main @ v0.0.714 (b7b243cc), 64-thread x86, 
   hot checks delivered → phase-2 targets: runAllRoutingChecks builds FIVE separate
   connMaps + re-extracts segments 3x per eval (share them); checkPadTraceClearance
   per-pair connMap calls (hoist); both via-spacing checks O(n²) with upstream TODO
-  "use flatbush"; SpatialObjectIndex spread-copies every insert. Phase-2 agent
-  running with byte-stable-order + downstream-anchor gates. tiny-hypergraph 6-patch
+  "use flatbush"; SpatialObjectIndex spread-copies every insert. **PHASE 2 DONE
+  (perf/checks-phase2, 4 commits): shared eval context (7 connMap builds + 3
+  segment extractions → 1 each), pad-trace net-id hoist, via-spacing spatial
+  pruning (order-restored, 60-board fuzz byte-identical, NaN fallback).
+  runAllRoutingChecks −43% synthetic / −13% keyboard1, outputs byte-identical;
+  downstream anchors exact + captures byte-identical after dist swap (throwaway
+  worktree). Insert-copy removal in SpatialObjectIndex proven not-safely-possible,
+  documented in code. Downstream stage gain modest so far (10.02→9.73s s8)
+  because lib/testing/getDrcErrors.ts calls checks individually — follow-up:
+  thread the new `segments` option there (kills a 3x extraction per eval).
+  Adoption into the stack queued behind the running D1 corpus gate.** tiny-hypergraph 6-patch
   chain converted to a real commit series (perf/stack-chain, cf16f23..24ad8ab),
   byte-verified vs the deployed node_modules; package suite base 97/0 → chain 99/0
   (our r2 patch adds+fixes heap tests). Folklore corrected: the "9 pre-existing env
