@@ -34,7 +34,13 @@ perf-audit-2026-07-23.md. Baselines: main @ v0.0.714 (b7b243cc), 64-thread x86, 
   DRC 41; s8 AUTO-ENABLED DRC 41==41. CLEAN interleaved A/B (quiet box,
   2 rounds each): **s8 75.7s -> 49.0s = 1.55x; s6 225.5s -> 103.8s =
   2.17x — DRC exact on both (41==41, 100==100)**, by DEFAULT for
-  CLI/server users (benchmark/CI stays sequential by design). 13 new G9 tests + 10 eviction tests; suite green modulo
+  CLI/server users (benchmark/CI stays sequential by design).
+  **CORPUS (srj18 x16, interleaved serial A/B, 480s cap,
+  /tmp/gauntlet-auto-ab.jsonl): aggregate 1407.2s -> 932.6s = 1.51x;
+  every board faster (1.09x s3 .. 2.15x s6); P50 per-board 1.25x;
+  DRC EXACT on all 16 boards; 16/16 completed in both configs.**
+  Heaviest boards win most (s6 2.15x, s13 1.75x, s2/s8 1.55x) — the
+  straggler-bound boards are exactly the ones parallelism feeds. 13 new G9 tests + 10 eviction tests; suite green modulo
   the 2 known upstream-drift failures.
 
 - **2026-07-26 — CONSOLIDATION SESSION (second-opinion review + fixes; full detail in
