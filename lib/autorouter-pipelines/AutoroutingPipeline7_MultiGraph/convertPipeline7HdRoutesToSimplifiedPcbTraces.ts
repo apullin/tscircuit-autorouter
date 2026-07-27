@@ -16,6 +16,13 @@ export interface ConvertPipeline7HdRoutesOptions {
   obstacles: Obstacle[]
   defaultViaHoleDiameter: number
   connMap: ConnectivityMap
+  /**
+   * When provided, filled with hdRoutes-index → pcb_trace_id (undefined for
+   * routes whose connectionName matches no connection — those produce no
+   * trace and are invisible to DRC). Used by the incremental DRC delta path
+   * to translate dirty route indexes into dirty trace ids.
+   */
+  traceIdByRouteIndexOut?: Array<string | undefined>
 }
 
 /** Converts Pipeline7 routes using the same net and terminal rules as final output. */
@@ -27,6 +34,7 @@ export const convertPipeline7HdRoutesToSimplifiedPcbTraces = ({
   obstacles,
   defaultViaHoleDiameter,
   connMap,
+  traceIdByRouteIndexOut,
 }: ConvertPipeline7HdRoutesOptions): SimplifiedPcbTraces => {
   const traces: SimplifiedPcbTraces = []
 
@@ -34,14 +42,18 @@ export const convertPipeline7HdRoutesToSimplifiedPcbTraces = ({
   // filter. Group order follows the hdRoutes array and the outer loop still
   // follows `connections`, so trace output order matches the filter version
   // exactly.
-  const routesByConnectionName = new Map<string, HighDensityRoute[]>()
-  for (const route of hdRoutes) {
+  const routesByConnectionName = new Map<
+    string,
+    Array<{ route: HighDensityRoute; routeIndex: number }>
+  >()
+  for (let routeIndex = 0; routeIndex < hdRoutes.length; routeIndex += 1) {
+    const route = hdRoutes[routeIndex]!
     let group = routesByConnectionName.get(route.connectionName)
     if (!group) {
       group = []
       routesByConnectionName.set(route.connectionName, group)
     }
-    group.push(route)
+    group.push({ route, routeIndex })
   }
 
   for (const connection of connections) {
@@ -64,7 +76,10 @@ export const convertPipeline7HdRoutesToSimplifiedPcbTraces = ({
     )
 
     for (let index = 0; index < connectionRoutes.length; index += 1) {
-      const hdRoute = connectionRoutes[index]!
+      const { route: hdRoute, routeIndex } = connectionRoutes[index]!
+      if (traceIdByRouteIndexOut) {
+        traceIdByRouteIndexOut[routeIndex] = `${connection.name}_${index}`
+      }
       const simplifiedPcbTrace: SimplifiedPcbTrace = {
         type: "pcb_trace",
         pcb_trace_id: `${connection.name}_${index}`,
