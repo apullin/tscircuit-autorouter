@@ -18,6 +18,30 @@ type PortfolioSingleIntraNodeSolverParams = ConstructorParameters<
 
 export const DEFAULT_MAX_GROWTH_ATTEMPTS = 3
 
+/**
+ * TS_GROWTH_SCHEDULE: optional comma-separated absolute scale factors tried in
+ * order (e.g. "1.2,2,4,8"), falling back to doubling past the end. Unset =
+ * upstream behavior (scaleFactor *= 2, i.e. 2, 4, 8).
+ *
+ * Growth relaxes clearance by exactly the scale factor: the inner solver keeps
+ * centres >= traceWidth + obstacleMargin (0.30mm) apart at scale s, and
+ * scaleRoute() shrinks that to 0.30/s while trace width stays 0.15mm, giving a
+ * gap of 0.30/s - 0.15. DRC's 0.1mm minimum therefore holds only for s <= 1.2,
+ * so every upstream rung is illegal by construction; "1.2,2,4,8" leads with
+ * the one legal rung and keeps the relaxed ones as backstop. NOTE: rungs
+ * beyond maxGrowthAttempts (default 3) are unreachable — "1.2,2,4,8" is
+ * effectively 1.2 -> 2 -> 4 unless maxGrowthAttempts is raised.
+ */
+const GROWTH_SCHEDULE: number[] | null = (() => {
+  if (typeof process === "undefined" || !process.env.TS_GROWTH_SCHEDULE) {
+    return null
+  }
+  const rungs = process.env.TS_GROWTH_SCHEDULE.split(",")
+    .map(Number)
+    .filter((n) => Number.isFinite(n) && n > 1)
+  return rungs.length > 0 ? rungs : null
+})()
+
 export type GrowShrinkHighDensityIntraNodeSolverParams =
   PortfolioSingleIntraNodeSolverParams & {
     maxGrowthAttempts?: number
@@ -227,8 +251,13 @@ export class GrowShrinkHighDensityIntraNodeSolver extends BaseSolver {
       return
     }
 
+    if (GROWTH_SCHEDULE) {
+      this.scaleFactor =
+        GROWTH_SCHEDULE[this.growthAttempts] ?? this.scaleFactor * 2
+    } else {
+      this.scaleFactor *= 2
+    }
     this.growthAttempts++
-    this.scaleFactor *= 2
   }
 
   visualize(): GraphicsObject {
