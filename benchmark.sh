@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Perf A/B harness: worker parallelism must NEVER leak in from the ambient
+# environment — identity anchors are sequential. These pins always apply;
+# A/B runs that want parallelism must set the flags explicitly (which
+# overrides the 0-defaults below). TS_BENCHMARK also keys the G9 auto-enable
+# resolver (lib/parallel/autoEnable.ts) off in every benchmark child.
+export TS_BENCHMARK=1
+export TS_PARALLEL_HD_NODES="${TS_PARALLEL_HD_NODES:-0}"
+export TS_PARALLEL_A2="${TS_PARALLEL_A2:-0}"
+
 SOLVER_NAME=""
 SCENARIO_LIMIT=""
 EFFORT=""

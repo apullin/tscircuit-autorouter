@@ -1,5 +1,14 @@
 #!/usr/bin/env bun
 
+// Defensive env pinning for direct invocation (benchmark.sh pins these too).
+// Benchmark children inherit process.env (see createChildProcess), so setting
+// defaults here keeps every sample sequential-by-default regardless of the
+// caller's ambient environment. Perf A/B runs must always set the parallel
+// flags explicitly.
+process.env.TS_BENCHMARK ??= "1"
+process.env.TS_PARALLEL_HD_NODES ??= "0"
+process.env.TS_PARALLEL_A2 ??= "0"
+
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process"
 import { appendFile, readFile, writeFile } from "node:fs/promises"
 import * as os from "node:os"
