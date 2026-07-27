@@ -173,11 +173,11 @@ perf-artifacts/kernel-inventory.md (accelerator analysis).
 
 ## G. Round 5 frontier (2026-07-26, from the second-opinion review — see REVIEW-2026-07-26.md)
 
-- [ ] **G1/R1. tiny-hypergraph compact-hop typed arrays** (M, identity-SAFE, ~2-4% wall). Every port
-      has exactly 2 incident regions (loadSerializedHyperGraph.ts:404 throws otherwise) ⇒
-      hopId' = portId*2+side; replaces the sparse-mode Maps (core.ts:399-404/640-671) and the heap's
-      indexByHopId Map + closedHopIds Set with typed arrays + generation stamps. The reason sparse
-      mode exists (portCount×regionCount blowup) vanishes.
+- [x] **G1/R1. tiny-hypergraph compact-hop typed arrays — LANDED 2026-07-26 (16192ba9,
+      bun-tiny-hypergraph-r1-compact-hop.patch).** hopId = portId*2+side; sparse-mode Maps and the
+      heap's indexByHopId Map + closedHopIds Set → typed arrays with generation stamps; compact
+      hopId cached on candidates at queue time (delivers R7). Identity-safe: anchors s5 1053687 /
+      s8 1973601 EXACT, DRC 0/41. Measured 1.089x on Tier-1.
 - [x] **G2/R2. Kill per-neighbor candidate allocation** — LANDED 2026-07-27 (59a7ab39).
       Step A was already live (R2a in the r5 patch); Step B: SoA pool in
       IndexedCandidateHeap with lazy Candidate materialization (one alloc per
@@ -185,15 +185,18 @@ perf-artifacts/kernel-inventory.md (accelerator analysis).
       harness 1100 cases 0 mismatches; anchors s5 1053687 / s8 1973601 EXACT,
       DRC 0/41 (re-verified by Main). Wall effect to be resolved by the next
       quiet-box gauntlet (identity-tier, expected ~2-5% of the pathing stage).
-- [ ] **G3/R3. Hoist per-dequeued-candidate invariants across the neighbor loop in computeG**
-      (M, safe if op order preserved, ~2-3.5% wall): regionCache + 5 fields, port angle, z, congestion,
-      viaSizeWithMarginSq rebuilt per call (computeRegionCost.ts:46-47). Mind the GreedyFinalRoute
-      subclass seam (core.ts:1508-1515).
-- [ ] **G4/R4. countNewIntersectionsWithValues tuple→packed int** (S, safe, ~0.5-1.3% wall).
-- [ ] **G5/R5. Blocker-search churn** (M, ~1.3-2.6% wall): getPortOwners() rebuilt twice per failure
-      with unchanged state (selective-rerip :196/:231→:334 — the second rebuild is R6, S-sized);
-      owner Sets → insertion-ordered arrays + bitset. CAUTION: [...owners] order feeds rip order —
-      a bare bitset is NOT identity-safe. Also the one remaining Math.hypot (:455).
+- [x] **G3/R3. computeG invariant hoisting — LANDED 2026-07-26 (3dd20cc4,
+      bun-tiny-hypergraph-g3-hoist.patch).** Per-dequeued-candidate invariants hoisted via
+      predeclared class fields with a self-repopulating guard (expansionCandidate !==
+      currentCandidate) covering unlisted call paths incl. the GreedyFinalRoute seam.
+      Anchors s5/s8 EXACT, DRC 0/41.
+- [x] **G4/R4. countNewIntersections packed int — LANDED 2026-07-26 (3fe64aa7, in the r5 patch).**
+      countNewIntersectionsPackedWithValues at both core.ts call sites; tuple API kept for compat.
+- [ ] **G5/R5. Blocker-search churn** (M, ~1.3-2.6% wall, REMAINING half): R6 (shared
+      getPortOwners() between direct and alternate blocker searches) LANDED 2026-07-26 in the r5
+      patch. Still open: owner Sets → insertion-ordered arrays + bitset. CAUTION: [...owners]
+      order feeds rip order — a bare bitset is NOT identity-safe. Also the one remaining
+      Math.hypot (selective-rerip :455).
 - [x] **G6. Eviction + re-path of over-committed nodes — BUILT, MEASURED, PARKED
       (2026-07-27, be0798ac, negative for speed).** Local-detour eviction works
       mechanically (TS_EVICT_REPATH, default off; 10 unit tests) and confirms
