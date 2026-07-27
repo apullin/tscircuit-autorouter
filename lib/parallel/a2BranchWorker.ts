@@ -1,6 +1,10 @@
 import { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import { GlobalDrcForceImproveSolver } from "high-density-repair03/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver"
 import { getDrcSnapshot } from "high-density-repair03/lib/solvers/GlobalDrcForceImproveSolver/drc-snapshot"
+import {
+  DRC_EVAL_STATS_ENABLED,
+  noteDrcEval,
+} from "high-density-repair03/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats"
 import { applyBroadRepulsionForces } from "high-density-repair03/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers"
 import { createPipeline7RelaxedDrcEvaluator } from "../autorouter-pipelines/AutoroutingPipeline7_MultiGraph/create-pipeline7-relaxed-drc-evaluator"
 
@@ -84,6 +88,7 @@ self.onmessage = (e: MessageEvent) => {
       solver.solve()
       if (solver.failed) throw new Error(`baseline branch failed: ${solver.error}`)
       const routes = solver.getOutput()
+      if (DRC_EVAL_STATS_ENABLED) noteDrcEval("boundary.baselineFinal")
       const snapshot = getDrcSnapshot(srj, routes, drcEvaluator, connMap)
       writeResult(task.resultSab, 1, { routes, count: snapshot.count })
       return
@@ -97,6 +102,7 @@ self.onmessage = (e: MessageEvent) => {
       task.broadPassMultiplier,
       connMap,
     )
+    if (DRC_EVAL_STATS_ENABLED) noteDrcEval("boundary.broadInput")
     const broadInputSnapshot = getDrcSnapshot(
       srj,
       broadInputRoutes,
@@ -114,6 +120,7 @@ self.onmessage = (e: MessageEvent) => {
     broadSolver.solve()
     if (broadSolver.failed) throw new Error(`broad branch failed: ${broadSolver.error}`)
     const broadRoutes = broadSolver.getOutput()
+    if (DRC_EVAL_STATS_ENABLED) noteDrcEval("boundary.broadFinal")
     const broadSnapshot = getDrcSnapshot(srj, broadRoutes, drcEvaluator, connMap)
     writeResult(task.resultSab, 1, {
       routes: broadRoutes,

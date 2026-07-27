@@ -121,6 +121,17 @@ rm+cp also works. Never edit in place.
 - bun-high-density-repair03.patch — sharesNet lookup reduction (5→2 per pair),
   createObstacleNetMatcher hoisted per obstacle in pushMovablesAwayFromObstacles.
   Equivalence verified by exhaustive small-case harness.
+  2026-07-27 (perf/drc-p0, identity-safe): adds TS_DRC_EVAL_STATS=1
+  instrumentation — new drcEvalStats.ts process-global counter/timer
+  singleton (also imported by repo-side lib/testing DRC code), snapshot
+  call-site counters in GlobalDrcForceImproveSolver (tags: initial / detour /
+  terminal-via / via-in-pad / layer-move / sweep / force / broad-fallback /
+  final / relaxation, "internal."-prefixed when the solver has no
+  drcEvaluator) and GlobalDrcBranchPortfolioSolver (boundary.*), and
+  per-snapshot ms timers in getDrcSnapshot (connMapAwareSrj /
+  simplifiedTraces / evaluatorCall / internalDrc / total). Env unset =
+  constant-false dead branches. Verified: s5 1053687 / s8 1973601 EXACT,
+  DRC 0/41, output traces byte-identical, repo tsc clean.
 - bun-tscircuit-math-utils@0.0.36.patch (added 2026-07-26; npm-hosted →
   patchedDependencies applies it automatically) — the whole-dist diff of the
   two PR-ready branches in ~/personal/math-utils-fix: orientation() collinearity

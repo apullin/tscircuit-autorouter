@@ -1,4 +1,9 @@
 import type { DrcEvaluator } from "high-density-repair03/lib"
+import {
+  DRC_EVAL_STATS_ENABLED,
+  noteDrcEval,
+  noteDrcEvalMs,
+} from "high-density-repair03/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats"
 import { evaluateRelaxedDrc } from "lib/testing/evaluate-relaxed-drc"
 import type { DrcConnectivityCache } from "lib/testing/getDrcErrors"
 import type { CircuitJsonScaffoldCache } from "lib/testing/utils/convertToCircuitJson"
@@ -37,10 +42,15 @@ export const createPipeline7RelaxedDrcEvaluator = (
       throw new Error("Pipeline7 relaxed DRC evaluation requires HD routes")
     }
 
+    const statsT0 = DRC_EVAL_STATS_ENABLED ? performance.now() : 0
     const traces = convertPipeline7HdRoutesToSimplifiedPcbTraces({
       ...restConversionOptions,
       hdRoutes: evaluatedRoutes,
     })
+    if (DRC_EVAL_STATS_ENABLED) {
+      noteDrcEval("evaluator")
+      noteDrcEvalMs("evaluator.convertTraces", performance.now() - statsT0)
+    }
     const { errors, errorsWithCenters } = evaluateRelaxedDrc({
       inputSrj: restConversionOptions.originalSrj,
       srjWithPointPairs: restConversionOptions.srjWithPointPairs,

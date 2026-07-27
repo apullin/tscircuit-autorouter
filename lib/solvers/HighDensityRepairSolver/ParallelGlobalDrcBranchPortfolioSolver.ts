@@ -1,6 +1,10 @@
 import { GlobalDrcForceImproveSolver } from "high-density-repair03/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver"
 import { GlobalDrcBranchPortfolioSolver } from "high-density-repair03/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolver"
 import { getDrcSnapshot } from "high-density-repair03/lib/solvers/GlobalDrcForceImproveSolver/drc-snapshot"
+import {
+  DRC_EVAL_STATS_ENABLED,
+  noteDrcEval,
+} from "high-density-repair03/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats"
 import { BROAD_FALLBACK_SMALL_ROUTE_LIMIT } from "high-density-repair03/lib/solvers/GlobalDrcForceImproveSolver/solverConfig"
 import type { HighDensityRoute } from "high-density-repair03/lib/types/high-density-types"
 import { resolveA2Parallelism } from "../../parallel/autoEnable"
@@ -71,6 +75,7 @@ export class ParallelGlobalDrcBranchPortfolioSolver extends GlobalDrcBranchPortf
       this.finishA2(routes, countsSoFar, {})
       return
     }
+    if (DRC_EVAL_STATS_ENABLED) noteDrcEval("boundary.viaInPadGate")
     const viaInPadInputSnapshot = getDrcSnapshot(
       params.srj,
       routes,
@@ -99,6 +104,7 @@ export class ParallelGlobalDrcBranchPortfolioSolver extends GlobalDrcBranchPortf
       throw new Error(`via-in-pad DRC repair branch failed: ${viaInPadSolver.error}`)
     }
     const viaInPadRoutes = viaInPadSolver.getOutput()
+    if (DRC_EVAL_STATS_ENABLED) noteDrcEval("boundary.viaInPadFinal")
     const viaInPadSnapshot = getDrcSnapshot(
       params.srj,
       viaInPadRoutes,
@@ -142,6 +148,7 @@ export class ParallelGlobalDrcBranchPortfolioSolver extends GlobalDrcBranchPortf
     }
 
     // 1. Input snapshot (in-process, as sequential "start" phase)
+    if (DRC_EVAL_STATS_ENABLED) noteDrcEval("boundary.input")
     const inputSnapshot = getDrcSnapshot(
       params.srj,
       this.inputHdRoutes,

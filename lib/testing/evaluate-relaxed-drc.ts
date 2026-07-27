@@ -1,4 +1,8 @@
 import type { AnyCircuitElement } from "circuit-json"
+import {
+  DRC_EVAL_STATS_ENABLED,
+  noteDrcEvalMs,
+} from "high-density-repair03/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats"
 import type { SimpleRouteJson, SimplifiedPcbTrace } from "lib/types"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import {
@@ -43,11 +47,15 @@ export const evaluateRelaxedDrc = ({
   connectivityCache,
   scaffoldCache,
 }: EvaluateRelaxedDrcInput): EvaluateRelaxedDrcResult => {
+  const statsT0 = DRC_EVAL_STATS_ENABLED ? performance.now() : 0
   const circuitJson = convertToCircuitJson(srjWithPointPairs, traces, {
     minTraceWidth: inputSrj.minTraceWidth,
     minViaDiameter: inputSrj.minViaDiameter,
     scaffoldCache,
   })
+  if (DRC_EVAL_STATS_ENABLED) {
+    noteDrcEvalMs("evaluate.convertToCircuitJson", performance.now() - statsT0)
+  }
 
   return {
     circuitJson,
