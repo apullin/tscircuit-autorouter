@@ -17,6 +17,9 @@ silently ignored). The three git deps must be patched manually from a repo
 checkout root:
 
     patch -p1 -d node_modules/tiny-hypergraph < perf-patches/bun-tiny-hypergraph.patch
+    # then, in order: bun-tiny-hypergraph-hypot.patch, bun-tiny-hypergraph-r5.patch,
+    # bun-tiny-hypergraph-r1-compact-hop.patch, bun-tiny-hypergraph-g3-hoist.patch,
+    # bun-tiny-hypergraph-r2-neighbor-alloc.patch
     patch -p1 -d node_modules/@tscircuit/high-density-a01 < perf-patches/bun-high-density-a01@0.0.36.patch
     patch -p1 -d node_modules/high-density-repair03 < perf-patches/bun-high-density-repair03.patch
 
@@ -91,6 +94,27 @@ rm+cp also works. Never edit in place.
   guard (expansionCandidate !== currentCandidate) keeps any unlisted call
   path identical. Verified: s5 1053687 / s8 1973601 iterations EXACT, DRC
   0/41, repo tsc clean.
+- bun-tiny-hypergraph-r2-neighbor-alloc.patch — **identity-safe, apply AFTER the
+  g3 patch** (2026-07-27, G2/R2 Step B; Step A's expansion-loop reorder
+  already landed in the r5 patch as R2a): IndexedCandidateHeap goes fully
+  struct-of-arrays — queued candidates are rows in a monotonic pool (Float64
+  f/g/h, Int32 port/next/prevRegion/hopId, plain arrays for prevCandidate
+  refs and lazily materialized objects, doubling growth, reset on clear),
+  and the heap itself holds pool slot indices with f and hopId mirrored in
+  parallel typed arrays (lockstep invariant), so sift loops compare the same
+  doubles in the same order and never touch objects. Candidate objects are
+  materialized only on dequeue/toArray — hops that are queued but never
+  dequeued (dominated replacements, still-open at route end) no longer
+  allocate. queue(candidate) keeps its exact old behavior (stores the
+  object; dequeue returns it — reference identity preserved), _step branches
+  once per dequeue via instanceof; the MinHeap fallback path
+  (GreedyFinalRouteSolver) is byte-identical. f = g + h computed with the
+  same operands inside queueFields. Verified: heap unit test fixed (was
+  broken by the R1 constructor change) + extended for queueFields, package
+  suite 68 pass / 9 pre-existing env fails, differential harness pre-vs-post
+  800 random-grid cases (2 solver kinds) bit-identical digests (iterations,
+  solved/failed, ripCount, portAssignment, regionSegments), anchors s5
+  1053687 / s8 1973601 EXACT, DRC 0/41, repo tsc clean.
 - bun-high-density-a01@0.0.36.patch — fillViaOccupants inlined + single-entry
   occupancy-version cache (A03 2.2x micro on dataset01 sample001), stepOnce /
   computeMoveCostAndRips invariant hoisting. Bit-identical outputs.

@@ -1,0 +1,542 @@
+diff --git a/lib/core.ts b/lib/core.ts
+index a36f340e..d49a2648 100644
+--- a/lib/core.ts
++++ b/lib/core.ts
+@@ -8,6 +8,7 @@ import {
+   isKnownSingleLayerMask,
+ } from "./computeRegionCost"
+ import { countNewIntersectionsPackedWithValues } from "./countNewIntersections"
++import { IndexedCandidateHeap } from "./indexed-candidate-heap"
+ import { MinHeap } from "./MinHeap"
+ import { shuffle } from "./shuffle"
+ import type { StaticallyUnroutableRouteSummary } from "./static-reachability"
+@@ -640,6 +641,17 @@ export class TinyHyperGraphSolver extends BaseSolver {
+     const neighbors =
+       topology.regionIncidentPorts[currentCandidate.nextRegionId]
+ 
++    // The indexed heap takes neighbor fields straight into its SoA pool and
++    // materializes the Candidate object only if the hop is dequeued; the
++    // MinHeap fallback (GreedyFinalRouteSolver) still queues objects. The
++    // unknown hop keeps instanceof from narrowing the MinHeap-typed state
++    // field to never (unrelated classes).
++    const candidateQueue: unknown = state.candidateQueue
++    const indexedQueue =
++      candidateQueue instanceof IndexedCandidateHeap
++        ? candidateQueue
++        : undefined
++
+     // Stash the per-dequeued-candidate invariants once, before the first
+     // computeG call of this expansion (including the DistanceAware
+     // onPathFound -> computeG path, which runs from inside this loop).
+@@ -686,18 +698,31 @@ export class TinyHyperGraphSolver extends BaseSolver {
+       if (g >= this.getCandidateBestCost(candidateHopId)) continue
+ 
+       const h = this.computeH(neighborPortId)
+-      const newCandidate = {
+-        prevRegionId: currentCandidate.nextRegionId,
+-        nextRegionId,
+-        portId: neighborPortId,
+-        g,
+-        h,
+-        f: g + h,
+-        prevCandidate: currentCandidate,
+-      }
+ 
+       this.setCandidateBestCost(candidateHopId, g)
+-      state.candidateQueue.queue(newCandidate)
++      if (indexedQueue !== undefined) {
++        // queueFields computes f as g + h with the same operands the object
++        // literal used; the Candidate object is deferred until dequeue.
++        indexedQueue.queueFields(
++          candidateHopId,
++          neighborPortId,
++          nextRegionId,
++          currentCandidate.nextRegionId,
++          g,
++          h,
++          currentCandidate,
++        )
++      } else {
++        state.candidateQueue.queue({
++          prevRegionId: currentCandidate.nextRegionId,
++          nextRegionId,
++          portId: neighborPortId,
++          g,
++          h,
++          f: g + h,
++          prevCandidate: currentCandidate,
++        })
++      }
+     }
+   }
+ 
+diff --git a/lib/indexed-candidate-heap.ts b/lib/indexed-candidate-heap.ts
+index f41bd6fc..392e2c6a 100644
+--- a/lib/indexed-candidate-heap.ts
++++ b/lib/indexed-candidate-heap.ts
+@@ -14,11 +14,43 @@ import type { RegionId } from "./types"
+  * closed-ness live in dense typed arrays validated by a generation stamp, so
+  * clear() is O(1) and the heap is safely reused across route searches without
+  * Map/Set bookkeeping in the sift loops.
++ *
++ * Storage is struct-of-arrays end to end (same pattern as the A01
++ * TypedSearchNodePool). Queued candidates are rows in a monotonic pool
++ * (reset on clear); the heap itself holds pool slot indices with each
++ * entry's f and hopId mirrored in parallel typed arrays, keeping this
++ * lockstep invariant at every live heap position i:
++ *
++ *   itemF[i] === poolF[itemSlot[i]]  and  itemHopId[i] === poolHopId[itemSlot[i]]
++ *
++ * so sift loops compare exactly the doubles the object-based heap compared,
++ * in the same order, and the resulting heap arrangement is identical.
++ * Candidate objects are materialized lazily — only when a slot is dequeued
++ * (or observed via toArray) — so hops that are queued but never dequeued
++ * (replaced by a better g, or still open when the route finishes) never pay
++ * for an object.
+  */
+ export class IndexedCandidateHeap {
+-  private items: Candidate[] = []
++  private itemSlot: Int32Array
++  private itemF: Float64Array
++  private itemHopId: Int32Array
++  private itemCount = 0
++
++  private poolF: Float64Array = new Float64Array(1024)
++  private poolG: Float64Array = new Float64Array(1024)
++  private poolH: Float64Array = new Float64Array(1024)
++  private poolPortId: Int32Array = new Int32Array(1024)
++  private poolNextRegionId: Int32Array = new Int32Array(1024)
++  /** -1 marks "no prevRegionId" (start candidates). */
++  private poolPrevRegionId: Int32Array = new Int32Array(1024)
++  private poolHopId: Int32Array = new Int32Array(1024)
++  private poolPrevCandidate: Array<Candidate | undefined> = []
++  /** Lazily materialized Candidate per pool slot (undefined until needed). */
++  private poolObject: Array<Candidate | undefined> = []
++  private poolLength = 0
++
+   /**
+-   * heapIndexByHopId[hopId] = position of the hop's entry in items. Only
++   * heapIndexByHopId[hopId] = position of the hop's entry in the heap. Only
+    * meaningful when heapIndexGenerationByHopId[hopId] === generation; -1
+    * marks a hop removed within the current generation (its root entry was
+    * dequeued).
+@@ -33,21 +65,34 @@ export class IndexedCandidateHeap {
+     portCount: number,
+     private readonly incidentPortRegion: RegionId[][],
+   ) {
++    // At most one live heap entry per hop, so 2 * portCount positions always
++    // suffice; the append path still grows defensively.
++    const hopCapacity = Math.max(portCount * 2, 1)
++    this.itemSlot = new Int32Array(hopCapacity)
++    this.itemF = new Float64Array(hopCapacity)
++    this.itemHopId = new Int32Array(hopCapacity)
+     this.heapIndexByHopId = new Int32Array(portCount * 2)
+     this.heapIndexGenerationByHopId = new Uint32Array(portCount * 2)
+     this.closedGenerationByHopId = new Uint32Array(portCount * 2)
+   }
+ 
+   get length(): number {
+-    return this.items.length
++    return this.itemCount
+   }
+ 
+   toArray(): Candidate[] {
+-    return [...this.items]
++    const result: Candidate[] = new Array(this.itemCount)
++    for (let i = 0; i < this.itemCount; i++) {
++      result[i] = this.materialize(this.itemSlot[i]!)
++    }
++    return result
+   }
+ 
+   clear(): void {
+-    this.items.length = 0
++    this.itemCount = 0
++    this.poolLength = 0
++    this.poolPrevCandidate.length = 0
++    this.poolObject.length = 0
+     // Bumping the generation invalidates every position and closed stamp at
+     // once. On wrap, fall back to a full reset so stale stamps from ~4e9
+     // clears ago can never read as current (same scheme as the solver's
+@@ -63,6 +108,52 @@ export class IndexedCandidateHeap {
+ 
+   queue(candidate: Candidate): void {
+     const hopId = this.getHopId(candidate)
++    const slot = this.pushPool(
++      hopId,
++      candidate.portId,
++      candidate.nextRegionId,
++      candidate.prevRegionId === undefined ? -1 : candidate.prevRegionId,
++      candidate.g,
++      candidate.h,
++      candidate.f,
++      candidate.prevCandidate,
++    )
++    // Object already exists — dequeue/toArray must return it unchanged.
++    this.poolObject[slot] = candidate
++    this.queueSlot(slot)
++  }
++
++  /**
++   * Object-free queue path for the expansion loop: the candidate's fields go
++   * straight into the pool and the Candidate object is materialized only if
++   * the hop is dequeued. f is computed here as g + h — the same operands and
++   * operation the removed object literal used. prevRegionId must be >= 0 on
++   * this path (every expansion candidate has a previous region).
++   */
++  queueFields(
++    hopId: number,
++    portId: number,
++    nextRegionId: RegionId,
++    prevRegionId: RegionId,
++    g: number,
++    h: number,
++    prevCandidate: Candidate,
++  ): void {
++    const slot = this.pushPool(
++      hopId,
++      portId,
++      nextRegionId,
++      prevRegionId,
++      g,
++      h,
++      g + h,
++      prevCandidate,
++    )
++    this.queueSlot(slot)
++  }
++
++  private queueSlot(slot: number): void {
++    const hopId = this.poolHopId[slot]!
+     if (this.closedGenerationByHopId[hopId] === this.generation) return
+ 
+     const existingIndex =
+@@ -70,11 +161,16 @@ export class IndexedCandidateHeap {
+         ? this.heapIndexByHopId[hopId]!
+         : -1
+     if (existingIndex !== -1) {
+-      const existingCandidate = this.items[existingIndex]!
+-      if (candidate.g >= existingCandidate.g) return
++      const existingSlot = this.itemSlot[existingIndex]!
++      const g = this.poolG[slot]!
++      if (g >= this.poolG[existingSlot]!) return
+ 
+-      this.items[existingIndex] = candidate
+-      if (candidate.f <= existingCandidate.f) {
++      const existingF = this.itemF[existingIndex]!
++      const f = this.poolF[slot]!
++      this.itemSlot[existingIndex] = slot
++      this.itemF[existingIndex] = f
++      this.itemHopId[existingIndex] = hopId
++      if (f <= existingF) {
+         this.siftUp(existingIndex)
+       } else {
+         this.siftDown(existingIndex)
+@@ -82,30 +178,38 @@ export class IndexedCandidateHeap {
+       return
+     }
+ 
+-    const index = this.items.length
+-    this.items.push(candidate)
++    const index = this.itemCount
++    if (index === this.itemSlot.length) this.growItems()
++    this.itemCount = index + 1
++    this.itemSlot[index] = slot
++    this.itemF[index] = this.poolF[slot]!
++    this.itemHopId[index] = hopId
+     this.heapIndexGenerationByHopId[hopId] = this.generation
+     this.heapIndexByHopId[hopId] = index
+     this.siftUp(index)
+   }
+ 
+   dequeue(): Candidate | undefined {
+-    const bestCandidate = this.items[0]
+-    if (!bestCandidate) return undefined
++    if (this.itemCount === 0) return undefined
+ 
+-    // Every item in the heap had its hopId stamped by queue(), and its
+-    // position generation stamp is current, so writing -1 marks it absent.
+-    const bestHopId = bestCandidate.hopId!
++    const bestSlot = this.itemSlot[0]!
++    const bestHopId = this.itemHopId[0]!
+     this.closedGenerationByHopId[bestHopId] = this.generation
+     this.heapIndexByHopId[bestHopId] = -1
+ 
+-    const lastCandidate = this.items.pop()!
+-    if (this.items.length > 0) {
+-      this.items[0] = lastCandidate
+-      this.heapIndexByHopId[lastCandidate.hopId!] = 0
++    const lastIndex = this.itemCount - 1
++    this.itemCount = lastIndex
++    if (lastIndex > 0) {
++      const lastSlot = this.itemSlot[lastIndex]!
++      const lastF = this.itemF[lastIndex]!
++      const lastHopId = this.itemHopId[lastIndex]!
++      this.itemSlot[0] = lastSlot
++      this.itemF[0] = lastF
++      this.itemHopId[0] = lastHopId
++      this.heapIndexByHopId[lastHopId] = 0
+       this.siftDown(0)
+     }
+-    return bestCandidate
++    return this.materialize(bestSlot)
+   }
+ 
+   /**
+@@ -134,35 +238,129 @@ export class IndexedCandidateHeap {
+     return hopId
+   }
+ 
++  private materialize(slot: number): Candidate {
++    const existing = this.poolObject[slot]
++    if (existing !== undefined) return existing
++
++    const prevRegionId = this.poolPrevRegionId[slot]!
++    const candidate: Candidate = {
++      prevRegionId: prevRegionId === -1 ? undefined : prevRegionId,
++      portId: this.poolPortId[slot]!,
++      nextRegionId: this.poolNextRegionId[slot]!,
++      prevCandidate: this.poolPrevCandidate[slot],
++      f: this.poolF[slot]!,
++      g: this.poolG[slot]!,
++      h: this.poolH[slot]!,
++      hopId: this.poolHopId[slot]!,
++    }
++    this.poolObject[slot] = candidate
++    return candidate
++  }
++
++  private pushPool(
++    hopId: number,
++    portId: number,
++    nextRegionId: RegionId,
++    prevRegionId: number,
++    g: number,
++    h: number,
++    f: number,
++    prevCandidate: Candidate | undefined,
++  ): number {
++    this.ensurePoolCapacity(this.poolLength + 1)
++    const slot = this.poolLength++
++    this.poolF[slot] = f
++    this.poolG[slot] = g
++    this.poolH[slot] = h
++    this.poolPortId[slot] = portId
++    this.poolNextRegionId[slot] = nextRegionId
++    this.poolPrevRegionId[slot] = prevRegionId
++    this.poolHopId[slot] = hopId
++    this.poolPrevCandidate[slot] = prevCandidate
++    this.poolObject[slot] = undefined
++    return slot
++  }
++
++  private ensurePoolCapacity(size: number): void {
++    if (size <= this.poolF.length) return
++    let next = this.poolF.length
++    while (next < size) next *= 2
++    const nextF = new Float64Array(next)
++    nextF.set(this.poolF)
++    this.poolF = nextF
++    const nextG = new Float64Array(next)
++    nextG.set(this.poolG)
++    this.poolG = nextG
++    const nextH = new Float64Array(next)
++    nextH.set(this.poolH)
++    this.poolH = nextH
++    const nextPortId = new Int32Array(next)
++    nextPortId.set(this.poolPortId)
++    this.poolPortId = nextPortId
++    const nextNextRegionId = new Int32Array(next)
++    nextNextRegionId.set(this.poolNextRegionId)
++    this.poolNextRegionId = nextNextRegionId
++    const nextPrevRegionId = new Int32Array(next)
++    nextPrevRegionId.set(this.poolPrevRegionId)
++    this.poolPrevRegionId = nextPrevRegionId
++    const nextHopId = new Int32Array(next)
++    nextHopId.set(this.poolHopId)
++    this.poolHopId = nextHopId
++  }
++
++  private growItems(): void {
++    const next = this.itemSlot.length * 2
++    const nextSlot = new Int32Array(next)
++    nextSlot.set(this.itemSlot)
++    this.itemSlot = nextSlot
++    const nextF = new Float64Array(next)
++    nextF.set(this.itemF)
++    this.itemF = nextF
++    const nextHopId = new Int32Array(next)
++    nextHopId.set(this.itemHopId)
++    this.itemHopId = nextHopId
++  }
++
+   private siftUp(startIndex: number): void {
+     // Hole-based sift: shift parents down without swapping, place the item
+     // once at its final index. Uses the same comparisons as a swap-based
+     // sift, so the resulting heap arrangement is identical. Moved items are
+     // always live heap entries, so their position generation stamps are
+-    // already current and only the position needs writing.
+-    const items = this.items
++    // already current and only the position needs writing. The mirrored f
++    // and hopId travel with the slot to keep the lockstep invariant.
++    const itemSlot = this.itemSlot
++    const itemF = this.itemF
++    const itemHopId = this.itemHopId
+     const heapIndexByHopId = this.heapIndexByHopId
+-    const item = items[startIndex]!
+-    const itemF = item.f
++    const slot = itemSlot[startIndex]!
++    const f = itemF[startIndex]!
++    const hopId = itemHopId[startIndex]!
+     let index = startIndex
+     while (index > 0) {
+       const parentIndex = (index - 1) >> 1
+-      const parent = items[parentIndex]!
+-      if (parent.f <= itemF) break
+-      items[index] = parent
+-      heapIndexByHopId[parent.hopId!] = index
++      const parentF = itemF[parentIndex]!
++      if (parentF <= f) break
++      itemSlot[index] = itemSlot[parentIndex]!
++      itemF[index] = parentF
++      itemHopId[index] = itemHopId[parentIndex]!
++      heapIndexByHopId[itemHopId[index]!] = index
+       index = parentIndex
+     }
+-    items[index] = item
+-    heapIndexByHopId[item.hopId!] = index
++    itemSlot[index] = slot
++    itemF[index] = f
++    itemHopId[index] = hopId
++    heapIndexByHopId[hopId] = index
+   }
+ 
+   private siftDown(startIndex: number): void {
+-    const items = this.items
++    const itemSlot = this.itemSlot
++    const itemF = this.itemF
++    const itemHopId = this.itemHopId
+     const heapIndexByHopId = this.heapIndexByHopId
+-    const item = items[startIndex]!
+-    const itemF = item.f
+-    const length = items.length
++    const slot = itemSlot[startIndex]!
++    const f = itemF[startIndex]!
++    const hopId = itemHopId[startIndex]!
++    const length = this.itemCount
+     let index = startIndex
+     while (true) {
+       const leftChildIndex = index * 2 + 1
+@@ -170,17 +368,20 @@ export class IndexedCandidateHeap {
+ 
+       const rightChildIndex = leftChildIndex + 1
+       const smallestChildIndex =
+-        rightChildIndex < length &&
+-        items[rightChildIndex]!.f < items[leftChildIndex]!.f
++        rightChildIndex < length && itemF[rightChildIndex]! < itemF[leftChildIndex]!
+           ? rightChildIndex
+           : leftChildIndex
+-      const smallestChild = items[smallestChildIndex]!
+-      if (itemF <= smallestChild.f) break
+-      items[index] = smallestChild
+-      heapIndexByHopId[smallestChild.hopId!] = index
++      const smallestChildF = itemF[smallestChildIndex]!
++      if (f <= smallestChildF) break
++      itemSlot[index] = itemSlot[smallestChildIndex]!
++      itemF[index] = smallestChildF
++      itemHopId[index] = itemHopId[smallestChildIndex]!
++      heapIndexByHopId[itemHopId[index]!] = index
+       index = smallestChildIndex
+     }
+-    items[index] = item
+-    heapIndexByHopId[item.hopId!] = index
++    itemSlot[index] = slot
++    itemF[index] = f
++    itemHopId[index] = hopId
++    heapIndexByHopId[hopId] = index
+   }
+ }
+diff --git a/tests/indexed-candidate-heap.test.ts b/tests/indexed-candidate-heap.test.ts
+index 3b8981d5..154ed1d5 100644
+--- a/tests/indexed-candidate-heap.test.ts
++++ b/tests/indexed-candidate-heap.test.ts
+@@ -15,8 +15,15 @@ const candidate = (params: {
+   h: params.f - params.g,
+ })
+ 
++// Every port has exactly two incident regions (loader invariant); the test
++// topology gives ports 1 and 2 incident region 2 on side 0.
++const incidentPortRegion: number[][] = Array.from({ length: 10 }, (_, i) => [
++  2,
++  100 + i,
++])
++
+ test("keeps the lowest-cost queued directed hop and closes dequeued hops", () => {
+-  const heap = new IndexedCandidateHeap(10)
++  const heap = new IndexedCandidateHeap(10, incidentPortRegion)
+   const firstHop = candidate({ portId: 1, nextRegionId: 2, g: 10, f: 10 })
+   const worseFirstHop = candidate({ portId: 1, nextRegionId: 2, g: 11, f: 1 })
+   const betterFirstHop = candidate({ portId: 1, nextRegionId: 2, g: 5, f: 20 })
+@@ -39,3 +46,62 @@ test("keeps the lowest-cost queued directed hop and closes dequeued hops", () =>
+   heap.queue(secondHop)
+   expect(heap.toArray()).toEqual([secondHop])
+ })
++
++test("queueFields materializes an equivalent candidate on dequeue", () => {
++  const heap = new IndexedCandidateHeap(10, incidentPortRegion)
++  const parent: Candidate = {
++    portId: 0,
++    nextRegionId: 2,
++    g: 0,
++    h: 0,
++    f: 0,
++  }
++
++  heap.queueFields(
++    /* hopId */ 1 * 2,
++    /* portId */ 1,
++    /* nextRegionId */ 2,
++    /* prevRegionId */ 2,
++    /* g */ 3,
++    /* h */ 4,
++    parent,
++  )
++  expect(heap.length).toBe(1)
++
++  const dequeued = heap.dequeue()
++  expect(dequeued).toEqual({
++    prevRegionId: 2,
++    portId: 1,
++    nextRegionId: 2,
++    prevCandidate: parent,
++    f: 7,
++    g: 3,
++    h: 4,
++    hopId: 2,
++  })
++  expect(dequeued?.prevCandidate).toBe(parent)
++  expect(heap.dequeue()).toBeUndefined()
++})
++
++test("queueFields replacement keeps the better g like the object path", () => {
++  const heap = new IndexedCandidateHeap(10, incidentPortRegion)
++  const parent: Candidate = {
++    portId: 0,
++    nextRegionId: 2,
++    g: 0,
++    h: 0,
++    f: 0,
++  }
++  const queueHop = (g: number, h: number) =>
++    heap.queueFields(2, 1, 2, 2, g, h, parent)
++
++  queueHop(10, 0)
++  queueHop(11, 0) // worse g: rejected
++  expect(heap.length).toBe(1)
++  queueHop(5, 0) // better g: replaces in place
++  expect(heap.length).toBe(1)
++
++  const dequeued = heap.dequeue()
++  expect(dequeued?.g).toBe(5)
++  expect(dequeued?.f).toBe(5)
++})
