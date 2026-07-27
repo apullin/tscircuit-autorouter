@@ -551,6 +551,25 @@ export class AutoroutingPipelineSolver7_MultiGraph extends BaseSolver {
           growShrinkFallbackToInvalidGeometryOnFailure: true,
         },
       ]
+    }, {
+      onSolved: (cms) => {
+        // TS_EVICT_REPATH: the HD stage may have changed the port-point
+        // assignment mid-solve (evicted connections moved to neighbors).
+        // The clone below feeds force-improve/repair, and a node that GAINED
+        // a connection is flagged invalid-route downstream unless re-synced
+        // (drc-check requires every routed connection to have port points in
+        // its node). Inert no-op when eviction never fired.
+        const touched =
+          cms.highDensityRouteSolver?.getEvictionTouchedNodePortPoints?.()
+        if (!touched?.length || !cms.highDensityNodePortPoints) return
+        const replacementById = new Map(
+          touched.map((node) => [node.capacityMeshNodeId, node] as const),
+        )
+        cms.highDensityNodePortPoints = cms.highDensityNodePortPoints.map(
+          (node) =>
+            replacementById.get(node.capacityMeshNodeId) ?? node,
+        )
+      },
     }),
     definePipelineStep(
       "highDensityForceImproveSolver",

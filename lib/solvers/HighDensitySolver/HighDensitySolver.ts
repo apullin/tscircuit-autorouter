@@ -28,6 +28,16 @@ import { PortfolioSingleIntraNodeSolver } from "../HyperHighDensitySolver/Portfo
 import { safeTransparentize } from "../colors"
 import { CachedIntraNodeRouteSolver } from "./CachedIntraNodeRouteSolver"
 import { IntraNodeRouteSolver } from "./IntraNodeSolver"
+import {
+  applyEvictionPlan,
+  buildNodeRectIndex,
+  evictionRepathEnabled,
+  type EvictionTunables,
+  getEvictableVictims,
+  type NodeRectIndex,
+  readEvictionTunables,
+  selectEvictionPlan,
+} from "./evictionRepath"
 
 type HighDensityIntraNodeSolver =
   | IntraNodeRouteSolver
@@ -77,6 +87,32 @@ export class HighDensitySolver extends BaseSolver {
   private parallelWorkerCount: number | null = null
   private dispatchedNodes = new Map<string, NodeWithPortPoints>()
   private solvedNodeIds = new Set<string>()
+  /**
+   * Eviction + re-path state (TS_EVICT_REPATH=1). Sequential path only: the
+   * orchestration mutates shared node assignment state and is not composed
+   * with the worker pool yet. Design: perf-artifacts/g6-eviction-design.md.
+   */
+  private eviction: {
+    index: NodeRectIndex
+    tunables: EvictionTunables
+    attemptsByNode: Map<string, number>
+    /** Recipients re-queued after gaining a connection: no eviction recursion. */
+    noEvictNodeIds: Set<string>
+    recipientUses: Map<string, number>
+    qCounter: number
+    evictionsApplied: number
+    evictionsRescued: number
+    nodesGrownAfterEviction: number
+    nodesWithoutPlan: number
+    /** noPlan breakdown: no pass-through victim vs all victim plans rejected. */
+    nodesWithoutVictim: number
+    nodesWithRejectedPlans: number
+    touchedNodeIds: Set<string>
+    routesByNode: Map<string, { start: number; count: number }>
+    replacedRoutes: Set<HighDensityIntraNodeRoute>
+    requeue: NodeWithPortPoints[]
+    victims: Array<{ nodeId: string; connectionName: string }>
+  } | null = null
   activeSubSolver: HighDensityIntraNodeSolver | null = null
   connMap?: ConnectivityMap
   nodePfById: Map<CapacityMeshNodeId, number | null>
@@ -160,6 +196,37 @@ export class HighDensitySolver extends BaseSolver {
       solverNodeCount: {} as Record<string, number>,
       difficultNodePfs: {} as Record<string, number[]>,
       highDensityResizeCount: 0,
+    }
+    if (
+      evictionRepathEnabled() &&
+      this.useGrowShrinkHighDensityIntraNodeSolver
+    ) {
+      if (this.resolveParallelWorkerCount() > 0) {
+        console.warn(
+          "TS_EVICT_REPATH: eviction+re-path is sequential-only; " +
+            "node-parallel HD is active, eviction disabled",
+        )
+      } else {
+        this.eviction = {
+          index: buildNodeRectIndex(nodePortPoints),
+          tunables: readEvictionTunables(),
+          attemptsByNode: new Map(),
+          noEvictNodeIds: new Set(),
+          recipientUses: new Map(),
+          qCounter: 0,
+          evictionsApplied: 0,
+          evictionsRescued: 0,
+          nodesGrownAfterEviction: 0,
+          nodesWithoutPlan: 0,
+          nodesWithoutVictim: 0,
+          nodesWithRejectedPlans: 0,
+          touchedNodeIds: new Set(),
+          routesByNode: new Map(),
+          replacedRoutes: new Set(),
+          requeue: [],
+          victims: [],
+        }
+      }
     }
   }
 
@@ -393,10 +460,7 @@ export class HighDensitySolver extends BaseSolver {
     result: HdNodeResult,
     node: NodeWithPortPoints | undefined,
   ) {
-    const solverNodeCount = this.stats.solverNodeCount as Record<
-      string,
-      number
-    >
+    const solverNodeCount = this.stats.solverNodeCount as Record<string, number>
     solverNodeCount[result.solverType] =
       (solverNodeCount[result.solverType] ?? 0) + 1
     if (!node) return
@@ -543,12 +607,29 @@ export class HighDensitySolver extends BaseSolver {
     }
     if (this.activeSubSolver) {
       this.activeSubSolver.step()
+      if (
+        this.eviction &&
+        !this.activeSubSolver.solved &&
+        !this.activeSubSolver.failed
+      ) {
+        this.maybeEvictBeforeGrowth()
+      }
       if (this.activeSubSolver.solved) {
-        this.routes.push(
-          ...(this.preserveTerminalPcbPortIds
-            ? this.getSolvedRoutesWithTerminalPcbPortIds(this.activeSubSolver)
-            : this.activeSubSolver.solvedRoutes),
-        )
+        const nodeRoutes = this.preserveTerminalPcbPortIds
+          ? this.getSolvedRoutesWithTerminalPcbPortIds(this.activeSubSolver)
+          : this.activeSubSolver.solvedRoutes
+        if (this.eviction) {
+          const solvedNodeId =
+            this.activeSubSolver.nodeWithPortPoints.capacityMeshNodeId
+          this.eviction.routesByNode.set(solvedNodeId, {
+            start: this.routes.length,
+            count: nodeRoutes.length,
+          })
+          if ((this.eviction.attemptsByNode.get(solvedNodeId) ?? 0) > 0) {
+            this.eviction.evictionsRescued++
+          }
+        }
+        this.routes.push(...nodeRoutes)
         this.recordNodeSolveMetadata(this.activeSubSolver, "solved")
         this.recordSolvedNodeStats(
           this.activeSubSolver,
@@ -567,6 +648,14 @@ export class HighDensitySolver extends BaseSolver {
       return
     }
     if (this.unsolvedNodePortPoints.length === 0) {
+      if (this.eviction && this.eviction.requeue.length > 0) {
+        // Dirty recipients (already-solved nodes that gained an evicted
+        // connection) re-solve after the untouched backlog drains.
+        this.unsolvedNodePortPoints.push(...this.eviction.requeue)
+        this.eviction.requeue.length = 0
+      }
+    }
+    if (this.unsolvedNodePortPoints.length === 0) {
       if (this.failedSolvers.length > 0) {
         this.solved = false
         this.failed = true
@@ -577,11 +666,35 @@ export class HighDensitySolver extends BaseSolver {
       }
 
       this.solved = true
+      if (this.eviction) {
+        // Drop replaced dirty-recipient routes in one pass at stage end —
+        // downstream stages only start after this stage completes.
+        if (this.eviction.replacedRoutes.size > 0) {
+          const replaced = this.eviction.replacedRoutes
+          this.routes = this.routes.filter((route) => !replaced.has(route))
+        }
+        this.stats.evictionRepath = {
+          evictionsApplied: this.eviction.evictionsApplied,
+          evictionsRescued: this.eviction.evictionsRescued,
+          nodesGrownAfterEviction: this.eviction.nodesGrownAfterEviction,
+          nodesWithoutPlan: this.eviction.nodesWithoutPlan,
+          nodesWithoutVictim: this.eviction.nodesWithoutVictim,
+          nodesWithRejectedPlans: this.eviction.nodesWithRejectedPlans,
+          victims: this.eviction.victims,
+          touchedNodeIds: [...this.eviction.touchedNodeIds],
+        }
+      }
       this.updateCacheStats()
       return
     }
     const node = this.unsolvedNodePortPoints.pop()!
+    this.activeSubSolver = this.createNodeSolver(node)
+    this.updateCacheStats()
+  }
 
+  private createNodeSolver(
+    node: NodeWithPortPoints,
+  ): HighDensityIntraNodeSolver {
     const intraNodeSolverParams = {
       nodeWithPortPoints: node,
       colorMap: this.colorMap,
@@ -597,10 +710,108 @@ export class HighDensitySolver extends BaseSolver {
       fallbackToInvalidGeometryOnFailure:
         this.growShrinkFallbackToInvalidGeometryOnFailure,
     }
-    this.activeSubSolver = this.useGrowShrinkHighDensityIntraNodeSolver
+    return this.useGrowShrinkHighDensityIntraNodeSolver
       ? new GrowShrinkHighDensityIntraNodeSolver(intraNodeSolverParams)
       : new PortfolioSingleIntraNodeSolver(intraNodeSolverParams)
-    this.updateCacheStats()
+  }
+
+  /**
+   * Eviction interception. GrowShrink handles growth internally, so the
+   * driver's signal for "N growth failures so far" is the growthAttempts
+   * transition with the inner solver nulled. When the trigger count is
+   * reached and an eviction plan exists, the node is trimmed in place and
+   * restarted as a fresh GrowShrink at scale 1 (which still grows the
+   * trimmed node if eviction does not rescue it — monotonic fallback,
+   * never worse than the rescue guarantee). No plan: growth proceeds
+   * untouched.
+   */
+  private maybeEvictBeforeGrowth(): void {
+    const eviction = this.eviction!
+    const solver = this.activeSubSolver
+    if (!(solver instanceof GrowShrinkHighDensityIntraNodeSolver)) return
+    if (
+      solver.growthAttempts !==
+        eviction.tunables.evictAfterGrowthFailures + 1 ||
+      solver.activeSubSolver !== null
+    ) {
+      return
+    }
+    const node = solver.nodeWithPortPoints
+    const nodeId = node.capacityMeshNodeId
+    if (eviction.noEvictNodeIds.has(nodeId)) return
+    const attempts = eviction.attemptsByNode.get(nodeId) ?? 0
+    if (attempts >= eviction.tunables.maxAttemptsPerNode) {
+      eviction.nodesGrownAfterEviction++
+      return
+    }
+    if (eviction.evictionsApplied >= eviction.tunables.globalBudget) return
+    const reservedRecipients = new Set<string>()
+    for (const [id, uses] of eviction.recipientUses) {
+      if (uses >= 1) reservedRecipients.add(id)
+    }
+    const plan = selectEvictionPlan(
+      eviction.index,
+      nodeId,
+      eviction.tunables,
+      reservedRecipients,
+    )
+    if (!plan) {
+      eviction.nodesWithoutPlan++
+      if (getEvictableVictims(node).length === 0) {
+        eviction.nodesWithoutVictim++
+      } else {
+        eviction.nodesWithRejectedPlans++
+      }
+      return
+    }
+    const applied = applyEvictionPlan(
+      eviction.index,
+      plan,
+      () => `evq-${eviction.qCounter++}`,
+    )
+    eviction.attemptsByNode.set(nodeId, attempts + 1)
+    eviction.evictionsApplied++
+    eviction.touchedNodeIds.add(nodeId)
+    eviction.victims.push({ nodeId, connectionName: plan.connectionName })
+    for (const recipientId of applied.recipientNodeIds) {
+      eviction.touchedNodeIds.add(recipientId)
+      eviction.recipientUses.set(
+        recipientId,
+        (eviction.recipientUses.get(recipientId) ?? 0) + 1,
+      )
+      if (!this.nodeSolveMetadataById.has(recipientId)) continue
+      // Already solved -> dirty: replace its routes and re-solve with the
+      // added connection. Unsolved recipients are mutated in place and get
+      // popped normally.
+      const slice = eviction.routesByNode.get(recipientId)
+      if (slice) {
+        for (let i = slice.start; i < slice.start + slice.count; i++) {
+          const route = this.routes[i]
+          if (route) eviction.replacedRoutes.add(route)
+        }
+      }
+      this.nodeSolveMetadataById.delete(recipientId)
+      eviction.noEvictNodeIds.add(recipientId)
+      const recipientNode = eviction.index.nodesById.get(recipientId)!
+      if (!eviction.requeue.includes(recipientNode)) {
+        eviction.requeue.push(recipientNode)
+      }
+    }
+    this.activeSubSolver = this.createNodeSolver(node)
+  }
+
+  /**
+   * Nodes whose port-point assignment changed under TS_EVICT_REPATH. The
+   * pipeline clones nodePortPoints BEFORE this stage runs, so downstream
+   * stages must re-sync their clone or a node that gained a connection is
+   * flagged invalid-route downstream (drc-check requires >=2 port points of
+   * every routed connection in its node).
+   */
+  getEvictionTouchedNodePortPoints(): NodeWithPortPoints[] | null {
+    if (!this.eviction || this.eviction.touchedNodeIds.size === 0) return null
+    return [...this.eviction.touchedNodeIds].map(
+      (nodeId) => this.eviction!.index.nodesById.get(nodeId)!,
+    )
   }
 
   private updateCacheStats() {
