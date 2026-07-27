@@ -7,6 +7,8 @@ import { createObjectsWithZLayers } from "lib/utils/createObjectsWithZLayers"
 import { BaseSolver } from "../BaseSolver"
 import { SingleSimplifiedPathSolver } from "./SingleSimplifiedPathSolver"
 import { SingleSimplifiedPathSolver5 } from "./SingleSimplifiedPathSolver5_Deg45"
+import { SharedRouteSegmentIndex } from "lib/data-structures/SharedRouteSegmentIndex"
+import { SharedObstacleIndex } from "lib/data-structures/SharedObstacleIndex"
 
 export class MultiSimplifiedPathSolver extends BaseSolver {
   override getSolverName(): string {
@@ -26,6 +28,29 @@ export class MultiSimplifiedPathSolver extends BaseSolver {
   outline?: Array<{ x: number; y: number }>
   defaultViaDiameter: number
 
+  /**
+   * Shared flatbush index over every segment of every unsimplified route,
+   * built once here and queried by each SingleSimplifiedPathSolver5's
+   * constructor (replacing its O(routes * segments) per-route scan). Valid
+   * for the whole run because unsimplifiedHdRoutes is never mutated in
+   * place — simplified geometry goes to simplifiedHdRoutes instead.
+   */
+  sharedRouteSegmentIndex: SharedRouteSegmentIndex
+
+  /**
+   * Shared flatbush index over the (z-layered) obstacles, built once here
+   * and queried by each SingleSimplifiedPathSolver5's constructor instead of
+   * scanning every obstacle per route.
+   */
+  sharedObstacleIndex: SharedObstacleIndex
+
+  /**
+   * Route indices to pass through unchanged instead of re-simplifying
+   * (TraceSimplificationSolver dirty tracking, TS_SIMP_DIRTY). Skipping a
+   * route is NOT result-identical to re-simplifying it — see the caller.
+   */
+  cleanRouteIndices?: ReadonlySet<number>
+
   constructor(params: {
     unsimplifiedHdRoutes: HighDensityIntraNodeRoute[]
     obstacles: Obstacle[]
@@ -33,9 +58,11 @@ export class MultiSimplifiedPathSolver extends BaseSolver {
     colorMap?: Record<string, string>
     outline?: Array<{ x: number; y: number }>
     defaultViaDiameter?: number
+    cleanRouteIndices?: ReadonlySet<number>
   }) {
     super()
     this.MAX_ITERATIONS = 100e6
+    this.cleanRouteIndices = params.cleanRouteIndices
 
     this.unsimplifiedHdRoutes = params.unsimplifiedHdRoutes
     const inferredLayerCount =
@@ -55,6 +82,10 @@ export class MultiSimplifiedPathSolver extends BaseSolver {
     this.defaultViaDiameter = params.defaultViaDiameter ?? 0.3
 
     this.simplifiedHdRoutes = []
+    this.sharedRouteSegmentIndex = new SharedRouteSegmentIndex(
+      this.unsimplifiedHdRoutes,
+    )
+    this.sharedObstacleIndex = new SharedObstacleIndex(this.obstacles)
   }
 
   _step() {
@@ -66,11 +97,24 @@ export class MultiSimplifiedPathSolver extends BaseSolver {
         return
       }
 
+      if (this.cleanRouteIndices?.has(this.currentUnsimplifiedHdRouteIndex)) {
+        // Dirty-tracking skip: pass the route through unchanged.
+        this.simplifiedHdRoutes.push(hdRoute)
+        this.stats.dirtySkippedRoutes =
+          ((this.stats.dirtySkippedRoutes as number) ?? 0) + 1
+        this.currentUnsimplifiedHdRouteIndex++
+        return
+      }
+
       this.activeSubSolver = new SingleSimplifiedPathSolver5({
         inputRoute: hdRoute,
         otherHdRoutes: this.unsimplifiedHdRoutes
           .slice(this.currentUnsimplifiedHdRouteIndex + 1)
           .concat(this.simplifiedHdRoutes),
+        sharedRouteSegmentIndex: this.sharedRouteSegmentIndex,
+        sharedIndexOwnRouteIndex: this.currentUnsimplifiedHdRouteIndex,
+        otherSimplifiedHdRoutes: this.simplifiedHdRoutes,
+        sharedObstacleIndex: this.sharedObstacleIndex,
         obstacles: this.obstacles,
         connMap: this.connMap,
         colorMap: this.colorMap,

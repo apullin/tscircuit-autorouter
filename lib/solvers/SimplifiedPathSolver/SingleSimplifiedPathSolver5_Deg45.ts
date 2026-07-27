@@ -17,6 +17,14 @@ import {
 } from "@tscircuit/math-utils"
 import { doesSegmentCrossPolygonBoundary } from "lib/utils/polygonContainment"
 import { JUMPER_DIMENSIONS } from "lib/utils/jumperSizes"
+import type {
+  IndexedRouteSegment,
+  SharedRouteSegmentIndex,
+} from "lib/data-structures/SharedRouteSegmentIndex"
+import type {
+  IndexedObstacle,
+  SharedObstacleIndex,
+} from "lib/data-structures/SharedObstacleIndex"
 
 interface Point {
   x: number
@@ -70,7 +78,29 @@ export class SingleSimplifiedPathSolver5 extends SingleSimplifiedPathSolver {
   TAIL_JUMP_RATIO: number = 0.8
 
   constructor(
-    params: ConstructorParameters<typeof SingleSimplifiedPathSolver>[0],
+    params: ConstructorParameters<typeof SingleSimplifiedPathSolver>[0] & {
+      /**
+       * Optional shared flatbush index over every segment of the Multi
+       * solver's unsimplified routes. When provided (together with
+       * sharedIndexOwnRouteIndex), the nearby-segment collection below
+       * queries it instead of scanning every other route's segments.
+       */
+      sharedRouteSegmentIndex?: SharedRouteSegmentIndex
+      /** This route's index in the array the shared index was built from. */
+      sharedIndexOwnRouteIndex?: number
+      /**
+       * Routes already simplified earlier in the Multi pass (their geometry
+       * is not in the shared index, which holds pre-simplification routes).
+       * Must be the trailing portion of otherHdRoutes, in the same order.
+       */
+      otherSimplifiedHdRoutes?: HighDensityIntraNodeRoute[]
+      /**
+       * Optional shared flatbush index over the obstacles array. When
+       * provided, the obstacle filter below queries it instead of testing
+       * every obstacle against this route. null means "no obstacles".
+       */
+      sharedObstacleIndex?: SharedObstacleIndex
+    },
   ) {
     super(params)
 
@@ -103,74 +133,169 @@ export class SingleSimplifiedPathSolver5 extends SingleSimplifiedPathSolver {
       height: bounds.maxY - bounds.minY,
     }
 
-    this.filteredObstacles = this.obstacles
-      .filter(
-        (obstacle) =>
-          !obstacle.connectedTo.some((id) =>
-            this.connMap.areIdsConnected(this.inputRoute.connectionName, id),
-          ),
+    const obstacleGapMargin = this.OBSTACLE_MARGIN + this.TRACE_THICKNESS / 2
+    const sharedObstacleIndex = params.sharedObstacleIndex
+    if (sharedObstacleIndex !== undefined) {
+      // Fast path (Multi solver): a shared flatbush over the obstacle boxes
+      // replaces the per-route scan of every obstacle. computeGapBetweenBoxes
+      // is the Euclidean gap hypot(dx, dy) with per-axis gaps dx, dy >= 0, so
+      // gap < margin implies the obstacle box intersects the route bounds
+      // grown by margin — every obstacle that can pass the exact test below
+      // is returned by this query. The exact gap test and the connectivity
+      // filter then run unchanged on the hits, and sorting restores the
+      // original obstacle order, so filteredObstacles is identical.
+      const hits = sharedObstacleIndex.search(
+        bounds.minX - obstacleGapMargin,
+        bounds.minY - obstacleGapMargin,
+        bounds.maxX + obstacleGapMargin,
+        bounds.maxY + obstacleGapMargin,
       )
-      .filter((obstacle) => {
+      hits.sort((a: IndexedObstacle, b: IndexedObstacle) => a.index - b.index)
+      const filteredObstacles: Obstacle[] = []
+      for (const { obstacle } of hits) {
+        const distance = computeGapBetweenBoxes(boundsBox, obstacle)
+        if (!(distance < obstacleGapMargin)) continue
         if (
-          obstacle.connectedTo.some((obsId) =>
-            this.connMap.areIdsConnected(this.inputRoute.connectionName, obsId),
+          obstacle.connectedTo.some((id) =>
+            this.connMap.areIdsConnected(this.inputRoute.connectionName, id),
           )
         ) {
+          continue
+        }
+        filteredObstacles.push(obstacle)
+      }
+      this.filteredObstacles = filteredObstacles
+    } else {
+      this.filteredObstacles = this.obstacles
+        .filter(
+          (obstacle) =>
+            !obstacle.connectedTo.some((id) =>
+              this.connMap.areIdsConnected(this.inputRoute.connectionName, id),
+            ),
+        )
+        .filter((obstacle) => {
+          if (
+            obstacle.connectedTo.some((obsId) =>
+              this.connMap.areIdsConnected(
+                this.inputRoute.connectionName,
+                obsId,
+              ),
+            )
+          ) {
+            return false
+          }
+
+          const distance = computeGapBetweenBoxes(boundsBox, obstacle)
+
+          if (distance < obstacleGapMargin) {
+            return true
+          }
+
           return false
-        }
-
-        const distance = computeGapBetweenBoxes(boundsBox, obstacle)
-
-        if (distance < this.OBSTACLE_MARGIN + this.TRACE_THICKNESS / 2) {
-          return true
-        }
-
-        return false
-      })
+        })
+    }
 
     const rejectMinX = bounds.minX - routeSegmentMargin
     const rejectMaxX = bounds.maxX + routeSegmentMargin
     const rejectMinY = bounds.minY - routeSegmentMargin
     const rejectMaxY = bounds.maxY + routeSegmentMargin
 
-    this.filteredObstaclePathSegments = this.otherHdRoutes.flatMap(
-      (hdRoute) => {
+    const nearbySegments: Array<[Point, Point]> = []
+
+    // Conservative bbox reject before the exact solve. If the segment's
+    // bounding box, grown by routeSegmentMargin, misses `bounds` entirely
+    // then every point on the segment is further than the margin from
+    // `bounds`, so the exact distance cannot pass the test below.
+    const appendNearbySegmentsFromRoute = (
+      hdRoute: HighDensityIntraNodeRoute,
+    ) => {
+      if (
+        this.connMap.areIdsConnected(
+          this.inputRoute.connectionName,
+          hdRoute.connectionName,
+        )
+      ) {
+        return
+      }
+
+      const route = hdRoute.route
+      for (let i = 0; i < route.length - 1; i++) {
+        const start = route[i]
+        const end = route[i + 1]
+
+        if (start.x < rejectMinX && end.x < rejectMinX) continue
+        if (start.x > rejectMaxX && end.x > rejectMaxX) continue
+        if (start.y < rejectMinY && end.y < rejectMinY) continue
+        if (start.y > rejectMaxY && end.y > rejectMaxY) continue
+
         if (
-          this.connMap.areIdsConnected(
-            this.inputRoute.connectionName,
-            hdRoute.connectionName,
-          )
+          segmentToBoundsMinDistance(start, end, bounds) <= routeSegmentMargin
         ) {
-          return []
+          nearbySegments.push([start, end])
         }
+      }
+    }
 
-        const route = hdRoute.route
-        const segments: Array<[Point, Point]> = []
-        // Conservative bbox reject before the exact solve. If the segment's
-        // bounding box, grown by routeSegmentMargin, misses `bounds` entirely
-        // then every point on the segment is further than the margin from
-        // `bounds`, so the exact distance cannot pass the test below. This
-        // constructor runs once per route and scans ALL other routes, so the
-        // exact call was O(routes^2 * segments) and dominated the stage.
-        for (let i = 0; i < route.length - 1; i++) {
-          const start = route[i]
-          const end = route[i + 1]
-
-          if (start.x < rejectMinX && end.x < rejectMinX) continue
-          if (start.x > rejectMaxX && end.x > rejectMaxX) continue
-          if (start.y < rejectMinY && end.y < rejectMinY) continue
-          if (start.y > rejectMaxY && end.y > rejectMaxY) continue
-
-          if (
-            segmentToBoundsMinDistance(start, end, bounds) <= routeSegmentMargin
-          ) {
-            segments.push([start, end])
-          }
+    const sharedIndex = params.sharedRouteSegmentIndex
+    const sharedOwnRouteIndex = params.sharedIndexOwnRouteIndex
+    if (sharedIndex !== undefined && sharedOwnRouteIndex !== undefined) {
+      // Fast path (Multi solver): one shared flatbush over every
+      // unsimplified route's segments replaces the per-route scan, which was
+      // O(routes^2 * segments) across a Multi pass and dominated the stage.
+      // The query box equals the bbox pre-reject above (flatbush search
+      // bounds are inclusive, matching the strict-< rejects), the same exact
+      // distance test runs on every hit, and hits are sorted back into
+      // (routeIndex, segIndex) order — so the collected segment list is
+      // identical, element for element, to the scan's.
+      const hits = sharedIndex.search(
+        rejectMinX,
+        rejectMinY,
+        rejectMaxX,
+        rejectMaxY,
+      )
+      const accepted: IndexedRouteSegment[] = []
+      const routeExcluded = new Map<number, boolean>()
+      for (const hit of hits) {
+        // Only routes AFTER this one are taken from the shared index (routes
+        // before it have been simplified and are covered below); the route
+        // itself is never its own obstacle.
+        if (hit.routeIndex <= sharedOwnRouteIndex) continue
+        let excluded = routeExcluded.get(hit.routeIndex)
+        if (excluded === undefined) {
+          excluded = this.connMap.areIdsConnected(
+            this.inputRoute.connectionName,
+            hit.connectionName,
+          )
+          routeExcluded.set(hit.routeIndex, excluded)
         }
+        if (excluded) continue
+        if (
+          segmentToBoundsMinDistance(hit.start, hit.end, bounds) <=
+          routeSegmentMargin
+        ) {
+          accepted.push(hit)
+        }
+      }
+      accepted.sort(
+        (a, b) => a.routeIndex - b.routeIndex || a.segIndex - b.segIndex,
+      )
+      for (const hit of accepted) {
+        nearbySegments.push([hit.start, hit.end])
+      }
 
-        return segments
-      },
-    )
+      // Routes already simplified earlier in the Multi pass changed geometry
+      // after the shared index was built, so they are scanned directly. They
+      // come after the unsimplified routes, matching otherHdRoutes order.
+      for (const hdRoute of params.otherSimplifiedHdRoutes ?? []) {
+        appendNearbySegmentsFromRoute(hdRoute)
+      }
+    } else {
+      for (const hdRoute of this.otherHdRoutes) {
+        appendNearbySegmentsFromRoute(hdRoute)
+      }
+    }
+
+    this.filteredObstaclePathSegments = nearbySegments
     this.segmentTree = new SegmentTree(this.filteredObstaclePathSegments)
 
     this.filteredVias = this.otherHdRoutes.flatMap((hdRoute) => {

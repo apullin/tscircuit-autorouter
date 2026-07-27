@@ -25,6 +25,69 @@ const pointInsideObstacle = (
 const isMultilayerObstacle = (obstacle: Obstacle) =>
   (obstacle.__zLayers?.length ?? obstacle.layers?.length ?? 0) > 1
 
+interface RouteFootprint {
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+}
+
+/**
+ * One-sided expansion applied to each route footprint when testing for
+ * geometric interaction. SingleSimplifiedPathSolver5's widest filter margin
+ * is OBSTACLE_MARGIN + TRACE_THICKNESS = 0.25 measured from one route's
+ * bounds; expanding BOTH footprints by 0.25 over-covers it.
+ */
+const DIRTY_INTERACTION_MARGIN = 0.25
+
+/** Covers half the largest jumper pad extent (1206: 3.2mm long). */
+const DIRTY_JUMPER_PAD_ALLOWANCE = 2
+
+const computeRouteFootprint = (route: HighDensityRoute): RouteFootprint => {
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const point of route.route) {
+    if (point.x < minX) minX = point.x
+    if (point.x > maxX) maxX = point.x
+    if (point.y < minY) minY = point.y
+    if (point.y > maxY) maxY = point.y
+  }
+  const viaRadius = route.viaDiameter / 2
+  for (const via of route.vias) {
+    if (via.x - viaRadius < minX) minX = via.x - viaRadius
+    if (via.x + viaRadius > maxX) maxX = via.x + viaRadius
+    if (via.y - viaRadius < minY) minY = via.y - viaRadius
+    if (via.y + viaRadius > maxY) maxY = via.y + viaRadius
+  }
+  for (const jumper of route.jumpers ?? []) {
+    for (const pad of [jumper.start, jumper.end]) {
+      if (pad.x - DIRTY_JUMPER_PAD_ALLOWANCE < minX)
+        minX = pad.x - DIRTY_JUMPER_PAD_ALLOWANCE
+      if (pad.x + DIRTY_JUMPER_PAD_ALLOWANCE > maxX)
+        maxX = pad.x + DIRTY_JUMPER_PAD_ALLOWANCE
+      if (pad.y - DIRTY_JUMPER_PAD_ALLOWANCE < minY)
+        minY = pad.y - DIRTY_JUMPER_PAD_ALLOWANCE
+      if (pad.y + DIRTY_JUMPER_PAD_ALLOWANCE > maxY)
+        maxY = pad.y + DIRTY_JUMPER_PAD_ALLOWANCE
+    }
+  }
+  return {
+    minX: minX - DIRTY_INTERACTION_MARGIN,
+    minY: minY - DIRTY_INTERACTION_MARGIN,
+    maxX: maxX + DIRTY_INTERACTION_MARGIN,
+    maxY: maxY + DIRTY_INTERACTION_MARGIN,
+  }
+}
+
+const footprintsOverlap = (a: RouteFootprint, b: RouteFootprint) =>
+  a.minX <= b.maxX && b.minX <= a.maxX && a.minY <= b.maxY && b.minY <= a.maxY
+
+/** Canonical value signature of a route's geometry. */
+const computeRouteSignature = (route: HighDensityRoute): string =>
+  JSON.stringify([route.route, route.vias, route.jumpers ?? null])
+
 /**
  * TraceSimplificationSolver consolidates trace optimization by iteratively applying
  * via removal, via merging, and path simplification phases. It reduces redundant vias
@@ -62,6 +125,32 @@ export class TraceSimplificationSolver extends BaseSolver {
 
   /** Callback to extract results from the active sub-solver */
   extractResult: ((solver: BaseSolver) => HighDensityRoute[]) | null = null
+
+  /**
+   * Dirty tracking across the outer loops (TS_SIMP_DIRTY=1, default OFF).
+   *
+   * When enabled, the second (and any later) path_simplification pass skips
+   * routes that did not change since the previous path_simplification pass
+   * and do not geometrically interact — by conservatively expanded bounding
+   * boxes, propagated transitively — with any route that did change.
+   *
+   * This is NOT result-identical, which is why it defaults off. Measured on
+   * srj18 sample 8 (TS_BENCHMARK=1): loop-2 via_removal changed 3/361 routes
+   * and via_merging 0/361, yet the baseline's loop-2 path_simplification
+   * still changed 247/361 routes. Re-simplification is not idempotent: in
+   * pass 1 each route sees the routes after it in raw (pre-simplification)
+   * form, in pass 2 it sees them simplified, and the head/tail walk finds
+   * further shortcuts on its own output. Skipping an "unchanged" route
+   * therefore freezes geometry the baseline would keep improving; the output
+   * stays DRC-valid but is not byte-identical.
+   */
+  private readonly dirtyTrackingEnabled = process.env.TS_SIMP_DIRTY === "1"
+
+  /** Per-connection route signatures after the last path_simplification pass. */
+  private lastSimplifiedSignatures: Map<string, string> | null = null
+
+  /** Per-connection route footprints after the last path_simplification pass. */
+  private lastSimplifiedFootprints: Map<string, RouteFootprint> | null = null
 
   /** Returns the simplified routes. This is the primary output of the solver. */
   get simplifiedHdRoutes(): HighDensityRoute[] {
@@ -220,6 +309,103 @@ export class TraceSimplificationSolver extends BaseSolver {
     })
   }
 
+  /**
+   * Indices into hdRoutes that are safe to skip under the dirty-tracking
+   * policy (see dirtyTrackingEnabled), or undefined when everything must be
+   * processed (first pass, or tracking disabled).
+   */
+  private computeCleanRouteIndices(): Set<number> | undefined {
+    const lastSignatures = this.lastSimplifiedSignatures
+    const lastFootprints = this.lastSimplifiedFootprints
+    if (!lastSignatures || !lastFootprints) return undefined
+
+    const n = this.hdRoutes.length
+    const footprints = this.hdRoutes.map(computeRouteFootprint)
+    const dirty: boolean[] = new Array(n).fill(false)
+
+    // Seed: routes whose geometry changed since the last simplification pass
+    // (via removal / merging touched them), plus routes we have no record of.
+    const seenConnections = new Set<string>()
+    for (let i = 0; i < n; i++) {
+      const route = this.hdRoutes[i]
+      seenConnections.add(route.connectionName)
+      const lastSignature = lastSignatures.get(route.connectionName)
+      if (
+        lastSignature === undefined ||
+        lastSignature !== computeRouteSignature(route)
+      ) {
+        dirty[i] = true
+      }
+    }
+
+    // Routes that disappeared since the last pass leave a changed region.
+    for (const [connectionName, footprint] of lastFootprints) {
+      if (seenConnections.has(connectionName)) continue
+      for (let i = 0; i < n; i++) {
+        if (!dirty[i] && footprintsOverlap(footprint, footprints[i])) {
+          dirty[i] = true
+        }
+      }
+    }
+
+    // Conservative closure: dirtiness spreads through geometric interaction.
+    // A dirty route may be re-simplified into new geometry, so neighbors of
+    // both its current footprint and its last-recorded footprint are dirty.
+    let spread = true
+    while (spread) {
+      spread = false
+      for (let i = 0; i < n; i++) {
+        if (!dirty[i]) continue
+        const oldFootprint = lastFootprints.get(
+          this.hdRoutes[i].connectionName,
+        )
+        for (let j = 0; j < n; j++) {
+          if (dirty[j] || j === i) continue
+          if (
+            footprintsOverlap(footprints[i], footprints[j]) ||
+            (oldFootprint && footprintsOverlap(oldFootprint, footprints[j]))
+          ) {
+            dirty[j] = true
+            spread = true
+          }
+        }
+      }
+    }
+
+    const clean = new Set<number>()
+    for (let i = 0; i < n; i++) {
+      if (!dirty[i]) clean.add(i)
+    }
+    if (process.env.TS_SIMP_DIAG) {
+      let seedCount = 0
+      for (let i = 0; i < n; i++) {
+        const route = this.hdRoutes[i]
+        const lastSignature = lastSignatures.get(route.connectionName)
+        if (
+          lastSignature === undefined ||
+          lastSignature !== computeRouteSignature(route)
+        )
+          seedCount++
+      }
+      console.error(
+        `[dirty-diag] seeds=${seedCount}/${n} clean=${clean.size}/${n}`,
+      )
+    }
+    return clean
+  }
+
+  /** Records post-pass route state for the next pass's dirty computation. */
+  private recordSimplifiedRouteState() {
+    const signatures = new Map<string, string>()
+    const footprints = new Map<string, RouteFootprint>()
+    for (const route of this.hdRoutes) {
+      signatures.set(route.connectionName, computeRouteSignature(route))
+      footprints.set(route.connectionName, computeRouteFootprint(route))
+    }
+    this.lastSimplifiedSignatures = signatures
+    this.lastSimplifiedFootprints = footprints
+  }
+
   _step() {
     if (
       this.simplificationPipelineLoops >= this.MAX_SIMPLIFICATION_PIPELINE_LOOPS
@@ -242,6 +428,19 @@ export class TraceSimplificationSolver extends BaseSolver {
           this.hdRoutes = this.markThroughObstacleSegments(
             this.extractResult(this.activeSubSolver),
           )
+        }
+
+        if (
+          this.dirtyTrackingEnabled &&
+          this.currentPhase === "path_simplification"
+        ) {
+          const skipped = (this.activeSubSolver as MultiSimplifiedPathSolver)
+            .stats?.dirtySkippedRoutes
+          this.stats.dirtySkippedRoutesByPass = [
+            ...((this.stats.dirtySkippedRoutesByPass as number[]) ?? []),
+            (skipped as number) ?? 0,
+          ]
+          this.recordSimplifiedRouteState()
         }
 
         // Clear activeSubSolver
@@ -324,6 +523,9 @@ export class TraceSimplificationSolver extends BaseSolver {
               ? [...this.simplificationConfig.outline]
               : undefined,
             defaultViaDiameter: this.simplificationConfig.defaultViaDiameter,
+            cleanRouteIndices: this.dirtyTrackingEnabled
+              ? this.computeCleanRouteIndices()
+              : undefined,
           })
           this.extractResult = (s) =>
             (s as MultiSimplifiedPathSolver).simplifiedHdRoutes
