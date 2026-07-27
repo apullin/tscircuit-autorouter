@@ -5,6 +5,35 @@ perf-audit-2026-07-23.md. Baselines: main @ v0.0.714 (b7b243cc), 64-thread x86, 
 
 ## Confirmed
 
+- **2026-07-27 (eve) — G10 capacity-model investigation: TWO levers found, shipped
+  as the `qualityMode` opt-in (7eb94e46), NOT a default.** Full story:
+  perf-artifacts/g10-capacity-prevention-design.md. (a) Pipeline-7 mesh comes
+  from the topology planner + NodeDimensionSubdivisionSolver
+  (`maxNodeDimension`, 16mm default); `targetMinCapacity`/`capacityDepth` are
+  silently DEAD opts there (sweep byte-identical) — upstream note candidate.
+  (b) **Mesh granularity alone (eff1)**: s8 mnd=2 = wall -18%, DRC 41->28 —
+  but finer mesh exhausts the fixed 2M*effort pathing budget on s6-class
+  boards (mnd=8 fails at eff1, mnd=2 fails at eff2/3) — cannot ship global
+  at eff1. (c) **EFFORT is the dominant DRC lever on s6** (eff2 control,
+  same mesh: DRC 100->40 at +11% wall; iterations +62%): doubling budgets
+  doubles every candidate's schedule slice — a global more-search=better-
+  winners trade, not doomed-node rescue (exhaustion is geometric; re-proving
+  at 2x just costs 2x). mnd=4/eff2 on s6 is pareto: wall -4%, DRC 100->34.
+  (d) **Corpus gate (srj18 x16 @ mnd=4/eff2): DRC -35% (468->306) at +80%
+  wall** — wins concentrate on DRC-heavy boards (s6 -66, s8 -23, s13 -27,
+  s14 -38), easy boards pay +150-270%; s15 timed out at 900s (pathology even
+  at 2x budget). (e) Targeted budgets DEAD: nodePf does not separate doomed
+  nodes (cmn_166 doomed at pf 0.000; cmn_434 healthy at 0.625) — third
+  confirmation doom has no local signature. Verdict: shipped as documented
+  opt-in `qualityMode` (3 tests); defaults unchanged. Follow-up if ever
+  wanted: pathing budgets scaled by region count (fixes the s15 class).
+- **2026-07-27 (eve) — G2/R2 LANDED (59a7ab39): tiny-hypergraph SoA
+  candidate heap with lazy materialization — bit-identical** (differential
+  harness 1100 seeded cases, 0 mismatches; anchors s5 1053687 / s8 1973601
+  EXACT, DRC 0/41, re-verified by Main). One alloc per expansion instead of
+  per queued hop; no object traffic in sift loops. Wall effect small
+  (identity-tier), next gauntlet resolves.
+
 - **2026-07-27 — G6 EVICTION+RE-PATH: mechanism built, measured, PARKED as
   negative-for-speed (be0798ac); G9 HD-node parallelism PRODUCTIZED (42d12713,
   83f46ea8 + earlier), auto-enable parity gate holds.** Full G6 writeup:

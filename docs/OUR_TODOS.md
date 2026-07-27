@@ -178,10 +178,13 @@ perf-artifacts/kernel-inventory.md (accelerator analysis).
       hopId' = portId*2+side; replaces the sparse-mode Maps (core.ts:399-404/640-671) and the heap's
       indexByHopId Map + closedHopIds Set with typed arrays + generation stamps. The reason sparse
       mode exists (portCount×regionCount blowup) vanishes.
-- [ ] **G2/R2. Kill per-neighbor candidate allocation** (S then M, safe). Step A: hoist the dominance
-      check (core.ts:613-614) above the object literal (:598-606); delete dead goal branch :608-611.
-      Step B: SoA candidate pool (proven pattern). R1+R2B ≈ one expansion-core rewrite, ~3.5-6% of
-      s8 wall.
+- [x] **G2/R2. Kill per-neighbor candidate allocation** — LANDED 2026-07-27 (59a7ab39).
+      Step A was already live (R2a in the r5 patch); Step B: SoA pool in
+      IndexedCandidateHeap with lazy Candidate materialization (one alloc per
+      expansion, zero object traffic in sift loops). Bit-identical: differential
+      harness 1100 cases 0 mismatches; anchors s5 1053687 / s8 1973601 EXACT,
+      DRC 0/41 (re-verified by Main). Wall effect to be resolved by the next
+      quiet-box gauntlet (identity-tier, expected ~2-5% of the pathing stage).
 - [ ] **G3/R3. Hoist per-dequeued-candidate invariants across the neighbor loop in computeG**
       (M, safe if op order preserved, ~2-3.5% wall): regionCache + 5 fields, port angle, z, congestion,
       viaSizeWithMarginSq rebuilt per call (computeRegionCost.ts:46-47). Mind the GreedyFinalRoute
@@ -204,16 +207,16 @@ perf-artifacts/kernel-inventory.md (accelerator analysis).
       ⇒ The lever is now unambiguously **capacity-model prevention**
       (getTunedTotalCapacity1, tuned for 2 layers on 4-layer boards) with
       PERF_NODE_DUMP labels + eviction stats as calibration truth.
-- [ ] **G10. Capacity-model prevention — THE remaining algorithmic lever (design-first).**
-      Every reactive path is now measured-closed: doomed nodes can't be predicted locally
-      (20975dbc), can't be cheaply rescued (G6: marginal-feasibility searches lose to
-      growth), can't be capped profitably (16da17b0). The planner over-commits nodes:
-      getTunedTotalCapacity1 is tuned for 2 layers while boards route 4 (20975dbc).
-      Calibration truth exists: PERF_NODE_DUMP's 1222 labelled nodes, eviction stats
-      (victims/placements per doomed node), and the GROWTH_SCHEDULE corpus data.
-      Goal: capacity formula that makes dense regions bigger/more numerous BEFORE the
-      HD stage, measured by doomed-node count on srj18 (target: most of the 12/board)
-      at fixed quality gates (anchors + DRC).
+- [x] **G10. Capacity-model prevention — INVESTIGATED, shipped as opt-in (2026-07-27,
+      7eb94e46).** Two levers measured: mesh granularity (maxNodeDimension —
+      targetMinCapacity proven a DEAD opt in pipeline 7) and effort scaling.
+      Corpus gate @ mnd=4/eff2: DRC -35% at +80% wall, wins on DRC-heavy
+      boards (s6 -66%, s8 -56%), easy boards pay +150-270%; s15 timeout
+      pathology. Effort's DRC win = global more-search=better-winners, not
+      doomed-node rescue; doomed nodes have no local signature (nodePf dead
+      too — cmn_166 doomed at pf 0.000). Shipped: `qualityMode` pipeline opt.
+      Follow-ups: region-count-scaled pathing budgets (s15 class); upstream
+      note about the dead opts.
 - [ ] **G7. Runtime A/B: node/V8 (and browser) vs bun/JSC.** Every campaign number is bun/JSC;
       downstream users run Node and browsers. One A/B of the published dist under node vs bun on
       samples 5/8 could reshuffle priorities (megamorphic solver code JITs very differently).
