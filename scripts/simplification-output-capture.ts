@@ -89,6 +89,9 @@ console.log(
       ? +(pipeline.timeSpentOnPhase.traceSimplificationSolver / 1000).toFixed(2)
       : null,
     routes: capture.simplifiedHdRoutes?.length ?? null,
+    dirtySkippedRoutesByPass:
+      pipeline.traceSimplificationSolver?.stats?.dirtySkippedRoutesByPass ??
+      null,
     out: outPath,
   }),
 )

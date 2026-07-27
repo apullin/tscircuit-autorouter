@@ -44,6 +44,13 @@ export class MultiSimplifiedPathSolver extends BaseSolver {
    */
   sharedObstacleIndex: SharedObstacleIndex
 
+  /**
+   * Route indices to pass through unchanged instead of re-simplifying
+   * (TraceSimplificationSolver dirty tracking, TS_SIMP_DIRTY). Skipping a
+   * route is NOT result-identical to re-simplifying it — see the caller.
+   */
+  cleanRouteIndices?: ReadonlySet<number>
+
   constructor(params: {
     unsimplifiedHdRoutes: HighDensityIntraNodeRoute[]
     obstacles: Obstacle[]
@@ -51,9 +58,11 @@ export class MultiSimplifiedPathSolver extends BaseSolver {
     colorMap?: Record<string, string>
     outline?: Array<{ x: number; y: number }>
     defaultViaDiameter?: number
+    cleanRouteIndices?: ReadonlySet<number>
   }) {
     super()
     this.MAX_ITERATIONS = 100e6
+    this.cleanRouteIndices = params.cleanRouteIndices
 
     this.unsimplifiedHdRoutes = params.unsimplifiedHdRoutes
     const inferredLayerCount =
@@ -85,6 +94,15 @@ export class MultiSimplifiedPathSolver extends BaseSolver {
     if (!this.activeSubSolver) {
       if (!hdRoute) {
         this.solved = true
+        return
+      }
+
+      if (this.cleanRouteIndices?.has(this.currentUnsimplifiedHdRouteIndex)) {
+        // Dirty-tracking skip: pass the route through unchanged.
+        this.simplifiedHdRoutes.push(hdRoute)
+        this.stats.dirtySkippedRoutes =
+          ((this.stats.dirtySkippedRoutes as number) ?? 0) + 1
+        this.currentUnsimplifiedHdRouteIndex++
         return
       }
 
