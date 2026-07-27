@@ -81,6 +81,17 @@ interface CapacityMeshSolverOptions {
   maxNodeRatio?: number
   minNodeArea?: number
   visualizationTraceColorMode?: TraceColorMode
+  /**
+   * Opt-in quality mode (2026-07-27 corpus gate, srj18 x16): applies
+   * { maxNodeDimension: 4, effort: 2 } as defaults (explicit values win).
+   * Measured: DRC -35% corpus-wide at +80% wall — wins concentrate on
+   * DRC-heavy boards (s6 100->34, s8 41->18, s14 124->86) while easy
+   * boards pay +150-270% wall. One srj18 board (s15) exceeded its
+   * pathing budget even at 2x (900s timeout) — boards with extreme
+   * congestion may need effort > 2. Use when route quality matters more
+   * than wall time. Evidence: perf-artifacts/g10-capacity-prevention-design.md.
+   */
+  qualityMode?: boolean
 }
 export type AutoroutingPipelineSolverOptions = CapacityMeshSolverOptions
 
@@ -518,59 +529,64 @@ export class AutoroutingPipelineSolver7_MultiGraph extends BaseSolver {
         },
       ],
     ),
-    definePipelineStep("highDensityRouteSolver", HighDensitySolver, (cms) => {
-      const uniformNodes = cms.uniformPortDistributionSolver?.getOutput() ?? []
-      const fallbackNodes =
-        cms.portPointPathingSolver?.getOutput().nodesWithPortPoints ?? []
-      const nodePortPointsSource =
-        uniformNodes.length > 0 ? uniformNodes : fallbackNodes
+    definePipelineStep(
+      "highDensityRouteSolver",
+      HighDensitySolver,
+      (cms) => {
+        const uniformNodes =
+          cms.uniformPortDistributionSolver?.getOutput() ?? []
+        const fallbackNodes =
+          cms.portPointPathingSolver?.getOutput().nodesWithPortPoints ?? []
+        const nodePortPointsSource =
+          uniformNodes.length > 0 ? uniformNodes : fallbackNodes
 
-      cms.highDensityNodePortPoints = structuredClone(nodePortPointsSource)
+        cms.highDensityNodePortPoints = structuredClone(nodePortPointsSource)
 
-      return [
-        {
-          nodePortPoints: nodePortPointsSource,
-          nodePfById: new Map(
-            (
-              cms.portPointPathingSolver?.getOutput().inputNodeWithPortPoints ??
-              []
-            ).map((node) => [
-              node.capacityMeshNodeId,
-              cms.portPointPathingSolver?.computeNodePf(node) ?? null,
-            ]),
-          ),
-          colorMap: cms.colorMap,
-          connMap: cms.connMap,
-          viaDiameter: cms.viaDiameter,
-          traceWidth: cms.minTraceWidth,
-          obstacleMargin: cms.srj.defaultObstacleMargin ?? 0.15,
-          obstacles: cms.srj.obstacles,
-          layerCount: cms.srj.layerCount,
-          useGrowShrinkHighDensityIntraNodeSolver: true,
-          preserveTerminalPcbPortIds: true,
-          growShrinkFallbackToInvalidGeometryOnFailure: true,
-        },
-      ]
-    }, {
-      onSolved: (cms) => {
-        // TS_EVICT_REPATH: the HD stage may have changed the port-point
-        // assignment mid-solve (evicted connections moved to neighbors).
-        // The clone below feeds force-improve/repair, and a node that GAINED
-        // a connection is flagged invalid-route downstream unless re-synced
-        // (drc-check requires every routed connection to have port points in
-        // its node). Inert no-op when eviction never fired.
-        const touched =
-          cms.highDensityRouteSolver?.getEvictionTouchedNodePortPoints?.()
-        if (!touched?.length || !cms.highDensityNodePortPoints) return
-        const replacementById = new Map(
-          touched.map((node) => [node.capacityMeshNodeId, node] as const),
-        )
-        cms.highDensityNodePortPoints = cms.highDensityNodePortPoints.map(
-          (node) =>
-            replacementById.get(node.capacityMeshNodeId) ?? node,
-        )
+        return [
+          {
+            nodePortPoints: nodePortPointsSource,
+            nodePfById: new Map(
+              (
+                cms.portPointPathingSolver?.getOutput()
+                  .inputNodeWithPortPoints ?? []
+              ).map((node) => [
+                node.capacityMeshNodeId,
+                cms.portPointPathingSolver?.computeNodePf(node) ?? null,
+              ]),
+            ),
+            colorMap: cms.colorMap,
+            connMap: cms.connMap,
+            viaDiameter: cms.viaDiameter,
+            traceWidth: cms.minTraceWidth,
+            obstacleMargin: cms.srj.defaultObstacleMargin ?? 0.15,
+            obstacles: cms.srj.obstacles,
+            layerCount: cms.srj.layerCount,
+            useGrowShrinkHighDensityIntraNodeSolver: true,
+            preserveTerminalPcbPortIds: true,
+            growShrinkFallbackToInvalidGeometryOnFailure: true,
+          },
+        ]
       },
-    }),
+      {
+        onSolved: (cms) => {
+          // TS_EVICT_REPATH: the HD stage may have changed the port-point
+          // assignment mid-solve (evicted connections moved to neighbors).
+          // The clone below feeds force-improve/repair, and a node that GAINED
+          // a connection is flagged invalid-route downstream unless re-synced
+          // (drc-check requires every routed connection to have port points in
+          // its node). Inert no-op when eviction never fired.
+          const touched =
+            cms.highDensityRouteSolver?.getEvictionTouchedNodePortPoints?.()
+          if (!touched?.length || !cms.highDensityNodePortPoints) return
+          const replacementById = new Map(
+            touched.map((node) => [node.capacityMeshNodeId, node] as const),
+          )
+          cms.highDensityNodePortPoints = cms.highDensityNodePortPoints.map(
+            (node) => replacementById.get(node.capacityMeshNodeId) ?? node,
+          )
+        },
+      },
+    ),
     definePipelineStep(
       "highDensityForceImproveSolver",
       HighDensityForceImproveSolver,
@@ -737,6 +753,11 @@ export class AutoroutingPipelineSolver7_MultiGraph extends BaseSolver {
     this.originalSrj = srjWithBoardValidObstacleLayers
     this.opts = { ...opts }
     const mutableOpts = this.opts
+    if (mutableOpts.qualityMode) {
+      // See the option doc: corpus-measured quality/speed trade.
+      mutableOpts.maxNodeDimension ??= 4
+      mutableOpts.effort ??= 2
+    }
     this.effort = mutableOpts.effort ?? 1
     // scale with effort so the outer cap never decapitates inner solvers
     this.MAX_ITERATIONS = 100e6 * this.effort
