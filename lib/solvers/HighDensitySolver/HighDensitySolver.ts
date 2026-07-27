@@ -11,10 +11,14 @@ import type {
 import type { Obstacle } from "../../types/srj-types"
 import {
   type HdNodePool,
+  type HdNodeResult,
   destroyHdNodePool,
   getHdNodePool,
-  parallelHdNodesEnabled,
 } from "../../parallel/hdNodePool"
+import {
+  gateHdNodeDecisionOnBoardSize,
+  resolveHdNodeParallelism,
+} from "../../parallel/autoEnable"
 import { BaseSolver } from "../BaseSolver"
 import {
   DEFAULT_MAX_GROWTH_ATTEMPTS,
@@ -70,7 +74,7 @@ export class HighDensitySolver extends BaseSolver {
 
   failedSolvers: HighDensityIntraNodeSolver[]
   private nodePool: HdNodePool | null = null
-  private parallelFailedNodeIds: string[] = []
+  private parallelWorkerCount: number | null = null
   private dispatchedNodes = new Map<string, NodeWithPortPoints>()
   private solvedNodeIds = new Set<string>()
   activeSubSolver: HighDensityIntraNodeSolver | null = null
@@ -341,6 +345,75 @@ export class HighDensitySolver extends BaseSolver {
   }
 
   /**
+   * Decides once per solve whether the node-parallel path is taken, and with
+   * how many workers. Explicit TS_PARALLEL_HD_NODES always wins (any board);
+   * auto mode (G9) additionally requires a board worth parallelizing — small
+   * boards stay sequential. Cached: env/hardware must not be re-probed on
+   * every pump iteration, and the choice must not flip mid-solve.
+   */
+  private resolveParallelWorkerCount(): number {
+    if (this.parallelWorkerCount !== null) return this.parallelWorkerCount
+    const decision = gateHdNodeDecisionOnBoardSize(
+      resolveHdNodeParallelism(),
+      this.unsolvedNodePortPoints.length,
+    )
+    this.parallelWorkerCount = decision.workerCount
+    return this.parallelWorkerCount
+  }
+
+  /**
+   * Parallel-path equivalent of recordNodeSolveMetadata: the winning solver
+   * instance cannot cross the worker boundary, so the worker computes the
+   * display fields (solverType via a mirror of getSolvedNodeSolverType, plus
+   * iterations and routeCount) and this side supplies the node and nodePf it
+   * owns. After this, visualize() emits the same node-boundary markers for
+   * parallel runs as for sequential ones.
+   */
+  private recordParallelNodeSolveMetadata(
+    result: HdNodeResult,
+    node: NodeWithPortPoints | undefined,
+    status: "solved" | "failed",
+  ) {
+    // nodeId always originates from tryDispatch, so the node is always
+    // present; a miss would indicate a pool bug, and metadata needs the node.
+    if (!node) return
+    this.nodeSolveMetadataById.set(result.nodeId, {
+      node,
+      status,
+      solverType: result.solverType,
+      iterations: result.iterations,
+      routeCount: result.routeCount,
+      nodePf: this.nodePfById.get(result.nodeId) ?? null,
+      error: result.error ?? undefined,
+    })
+  }
+
+  /** Parallel-path equivalent of recordSolvedNodeStats. */
+  private recordParallelSolvedNodeStats(
+    result: HdNodeResult,
+    node: NodeWithPortPoints | undefined,
+  ) {
+    const solverNodeCount = this.stats.solverNodeCount as Record<
+      string,
+      number
+    >
+    solverNodeCount[result.solverType] =
+      (solverNodeCount[result.solverType] ?? 0) + 1
+    if (!node) return
+    const pf = this.nodePfById.get(node.capacityMeshNodeId) ?? null
+    if (pf !== null && pf > 0.05) {
+      const difficultNodePfs = this.stats.difficultNodePfs as Record<
+        string,
+        number[]
+      >
+      if (!difficultNodePfs[result.solverType]) {
+        difficultNodePfs[result.solverType] = []
+      }
+      difficultNodePfs[result.solverType].push(pf)
+    }
+  }
+
+  /**
    * NODE-level parallel path (TS_PARALLEL_HD_NODES=N).
    *
    * Nodes are independent - each solver receives only its own port points plus
@@ -354,7 +427,7 @@ export class HighDensitySolver extends BaseSolver {
   private parallelNodeStep(): void {
     try {
       if (!this.nodePool) {
-        this.nodePool = getHdNodePool(parallelHdNodesEnabled(), {
+        this.nodePool = getHdNodePool(this.resolveParallelWorkerCount(), {
           colorMap: this.colorMap,
           connMap: this.connMap,
           viaDiameter: this.viaDiameter,
@@ -373,20 +446,56 @@ export class HighDensitySolver extends BaseSolver {
       const pool = this.nodePool
 
       for (const result of pool.poll()) {
+        const node = this.dispatchedNodes.get(result.nodeId)
+        this.dispatchedNodes.delete(result.nodeId)
         if (result.solved) {
-          const node = this.dispatchedNodes.get(result.nodeId)
           const routes = result.routes as HighDensityIntraNodeRoute[]
           this.routes.push(
             ...(this.preserveTerminalPcbPortIds && node
               ? this.annotateRoutesWithTerminalPcbPortIds(node, routes)
               : routes),
           )
-          this.dispatchedNodes.delete(result.nodeId)
           this.solvedNodeIds.add(result.nodeId)
+          this.recordParallelNodeSolveMetadata(result, node, "solved")
+          this.recordParallelSolvedNodeStats(result, node)
         } else {
-          this.parallelFailedNodeIds.push(result.nodeId)
+          // failedSolvers parity: the failing solver instance lives (and is
+          // gone) inside the worker, so record a structural stand-in carrying
+          // exactly the fields the failure path reads (nodeWithPortPoints for
+          // the id list, error for err0). Cast reason: a real solver instance
+          // cannot cross the worker boundary — never call solver methods on
+          // this stand-in.
+          const failedNode = node ?? {
+            capacityMeshNodeId: result.nodeId,
+            portPoints: [],
+            center: { x: 0, y: 0 },
+            width: 0,
+            height: 0,
+          }
+          this.failedSolvers.push({
+            nodeWithPortPoints: failedNode,
+            error: result.error,
+            iterations: result.iterations,
+            solvedRoutes: [],
+            failed: true,
+            solved: false,
+          } as unknown as HighDensityIntraNodeSolver)
           this.error ??= `Failed to solve node ${result.nodeId}: ${result.error}`
+          this.recordParallelNodeSolveMetadata(result, node, "failed")
         }
+        // recordResizeStats parity: the sequential path adds growthAttempts on
+        // both the solved and failed branches (0 for non-GrowShrink nodes).
+        this.stats.highDensityResizeCount =
+          (this.stats.highDensityResizeCount ?? 0) + result.growthAttempts
+        // updateCacheStats parity: the sequential path reads the MAIN-process
+        // global cache counters, which worker solves never touch, so the
+        // parallel path accumulates the per-task deltas reported by workers.
+        // Not 1:1 comparable with sequential counters — each worker has a
+        // private success-only cache, so cross-node reuse is per worker.
+        this.stats.intraNodeCacheHits =
+          (this.stats.intraNodeCacheHits ?? 0) + result.cacheHits
+        this.stats.intraNodeCacheMisses =
+          (this.stats.intraNodeCacheMisses ?? 0) + result.cacheMisses
       }
 
       while (this.unsolvedNodePortPoints.length > 0) {
@@ -408,9 +517,10 @@ export class HighDensitySolver extends BaseSolver {
       if (this.unsolvedNodePortPoints.length === 0 && pool.inFlight === 0) {
         destroyHdNodePool()
         this.nodePool = null
-        if (this.parallelFailedNodeIds.length > 0) {
+        if (this.failedSolvers.length > 0) {
           this.failed = true
-          this.error = `Failed to solve ${this.parallelFailedNodeIds.length} nodes, ${this.parallelFailedNodeIds.slice(0, 5)}. ${this.error ?? ""}`
+          // Same message shape as the sequential failure path.
+          this.error = `Failed to solve ${this.failedSolvers.length} nodes, ${this.failedSolvers.slice(0, 5).map((fs) => fs.nodeWithPortPoints.capacityMeshNodeId)}. err0: ${this.failedSolvers[0]?.error}.`
           return
         }
         this.solved = true
@@ -427,7 +537,7 @@ export class HighDensitySolver extends BaseSolver {
    * of it.
    */
   _step() {
-    if (parallelHdNodesEnabled() > 0) {
+    if (this.resolveParallelWorkerCount() > 0) {
       this.parallelNodeStep()
       return
     }
