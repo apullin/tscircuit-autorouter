@@ -5,6 +5,26 @@ perf-audit-2026-07-23.md. Baselines: main @ v0.0.714 (b7b243cc), 64-thread x86, 
 
 ## Confirmed
 
+- **2026-07-27 (late) — D1 INCREMENTAL DRC landed (merge ee81a48d): stage-2 wall s8
+  ~1.6x / s12 ~2.0x, decision-identical, flag default OFF pending corpus gate.**
+  TS_INCREMENTAL_DRC=1: candidates screened by a pruned-input delta evaluation
+  (dirty routes + spatial neighbors through the SAME five check functions, exact
+  differencing on the additive (count, issueScore, viaIssueCount) contract);
+  acceptance still takes ONE full eval as the new base, preserving error ordering
+  for targeting cursors. Verify-mode (dual-compute + assert) evidence: ZERO
+  mismatches on complete s5/s8/s12 — s12 92/92 candidates exact; s8 94 screened
+  (65 exact, 29 within 1e-6 summation-order noise WITH decision agreement
+  asserted, 9 clean fallbacks on >16-dirty-route sweeps). Flag-on runs are
+  iteration+DRC EXACTLY equal to flag-off on s8/s12. New trap for the books:
+  float summation-order noise vs ~1e-3-quantized severities (handle with
+  multiset short-circuit + tolerance + decision-agreement assert, NOT bare
+  equality). Dirty detection is geometric state-diff (complete by construction),
+  not apply*-helper instrumentation. Freebie shipped default-ON: getConnMapAwareSrj
+  memoized (route-invariant, verified). Default-on awaits Tier-1 + corpus gate +
+  a via-in-pad-heavy verify run (those candidate classes had zero volume on
+  s8/s12). Headroom noted: conversion-path pruning, indexed pruning to lift
+  MAX_DIRTY_ROUTES, acceptance re-eval reuse.
+
 - **2026-07-27 (late) — NODE worker_threads PARALLELISM landed (merge 8904d3ac, G7b):
   Node users now get the parallel stack.** Thin runtime shim (lib/parallel/runtime.ts,
   Bun branch verbatim); worker entries prebundled lazily (node refuses node_modules TS +
