@@ -143,6 +143,13 @@ rm+cp also works. Never edit in place.
   === drcEvaluator (the pipeline passes one shared closure). Same values,
   computed once. Verified: s5 1053687 / s8 1973601 EXACT, DRC 0/41, output
   traces byte-identical, repo tsc clean.
+  2026-07-27 (perf/drc-d1 freebie, result-identical, default-on):
+  getConnMapAwareSrj memoized in netUtils.ts — output depends only on
+  (srj.connections, srj.obstacles, connMap), all stable during a solver run,
+  yet it was rebuilt per snapshot (~10% of snapshot cost). WeakMap keyed by
+  srj identity, revalidated against connMap/connections/obstacles
+  identities; cached result treated as immutable by all callers. Verified:
+  s5 1053687 / s8 1973601 EXACT, DRC 0/41, output traces byte-identical.
   2026-07-27 (perf/drc-p0 P0-adjacent, result-identical): createSimplifiedTraces
   builds a routes-by-connection Map in one pass instead of the per-connection
   O(connections × routes) map+filter; trace output order preserved exactly

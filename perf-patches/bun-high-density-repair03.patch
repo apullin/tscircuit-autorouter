@@ -1,6 +1,6 @@
-diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats.ts b/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats.ts
+diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats.ts b/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats.ts
 --- a/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats.ts	1970-01-01 00:00:00.000000000 +0000
-+++ b/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats.ts	2026-07-27 19:14:14.181606534 +0000
++++ b/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats.ts	2026-07-27 19:31:57.994065125 +0000
 @@ -0,0 +1,52 @@
 +/**
 + * Env-gated DRC evaluation instrumentation (TS_DRC_EVAL_STATS=1).
@@ -54,9 +54,9 @@ diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats.ts b/lib/solver
 +    Object.entries(drcEvalStats.ms).map(([tag, ms]) => [tag, +ms.toFixed(1)]),
 +  ),
 +})
-diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolver.ts b/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolver.ts
---- a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolver.ts	2026-07-27 19:03:45.488979316 +0000
-+++ b/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolver.ts	2026-07-27 19:14:14.181704258 +0000
+diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolver.ts b/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolver.ts
+--- a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolver.ts	2026-07-27 18:47:02.703569216 +0000
++++ b/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolver.ts	2026-07-27 19:31:57.994196763 +0000
 @@ -3,6 +3,7 @@
  import type { HighDensityRoute } from "../../types/high-density-types"
  import { GlobalDrcForceImproveSolver } from "./GlobalDrcForceImproveSolver"
@@ -238,9 +238,9 @@ diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolv
        this.finishWithOutput(
          viaInPadRoutes,
          viaInPadSnapshot,
-diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts b/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts
---- a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts	2026-07-27 19:03:45.489055860 +0000
-+++ b/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts	2026-07-27 19:14:14.181650116 +0000
+diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts b/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts
+--- a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts	2026-07-27 18:47:02.703569216 +0000
++++ b/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts	2026-07-27 19:31:57.994123735 +0000
 @@ -1,6 +1,7 @@
  import { BaseSolver } from "../BaseSolver"
  import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
@@ -383,10 +383,73 @@ diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.
    override visualize(): GraphicsObject {
      return registeredVisualizer?.(this) ?? super.visualize()
    }
-diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts b/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts
---- a/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts	2026-07-27 19:03:45.489261337 +0000
-+++ b/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts	2026-07-27 19:14:14.181575515 +0000
-@@ -50,20 +50,43 @@
+diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts b/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts
+--- a/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts	2026-07-27 18:47:02.703569216 +0000
++++ b/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts	2026-07-27 20:07:46.846606352 +0000
+@@ -13,13 +13,46 @@
+   return connMap.getNetConnectedToId(id)
+ }
+ 
++/**
++ * getConnMapAwareSrj is route-invariant: its output depends only on
++ * (srj.connections, srj.obstacles, connMap). During a DRC solver run those
++ * are stable (the pipeline builds connMap once before the DRC stages and
++ * never mutates it afterwards; srj is treated read-only), yet the function
++ * was rebuilt for every snapshot — ~10% of per-snapshot cost. Cache the
++ * result keyed by srj object identity, revalidated against the identities
++ * of connMap and the connections/obstacles arrays. The cached result must
++ * be treated as immutable by all callers (they already do — it feeds
++ * read-only conversion paths).
++ */
++type ConnMapAwareSrjCacheEntry = {
++  connMap: ConnectivityMap
++  connections: SimpleRouteJson["connections"]
++  obstacles: SimpleRouteJson["obstacles"]
++  result: SimpleRouteJson
++}
++
++const connMapAwareSrjCache = new WeakMap<
++  SimpleRouteJson,
++  ConnMapAwareSrjCacheEntry
++>()
++
+ export const getConnMapAwareSrj = (
+   srj: SimpleRouteJson,
+   connMap: ConnectivityMap | undefined,
+ ): SimpleRouteJson => {
+   if (!connMap) return srj
+ 
+-  return {
++  const cached = connMapAwareSrjCache.get(srj)
++  if (
++    cached &&
++    cached.connMap === connMap &&
++    cached.connections === srj.connections &&
++    cached.obstacles === srj.obstacles
++  ) {
++    return cached.result
++  }
++
++  const result: SimpleRouteJson = {
+     ...srj,
+     connections: srj.connections.map((connection) => {
+       const netConnectionName =
+@@ -41,6 +74,14 @@
+       return { ...obstacle, connectedTo: [...connectedTo] }
+     }),
+   }
++
++  connMapAwareSrjCache.set(srj, {
++    connMap,
++    connections: srj.connections,
++    obstacles: srj.obstacles,
++    result,
++  })
++  return result
+ }
+ 
+ export const sharesNet = (
+@@ -50,20 +91,43 @@
  ) => {
    if (!right) return false
    if (left === right) return true
@@ -437,9 +500,9 @@ diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts b/lib/solvers/Gl
  export const obstacleSharesNet = (
    rootConnectionName: string,
    obstacle: SimpleRouteJson["obstacles"][number],
-diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts b/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts
---- a/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts	2026-07-27 19:03:45.489371955 +0000
-+++ b/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts	2026-07-27 19:14:14.181482089 +0000
+diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts b/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts
+--- a/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts	2026-07-27 18:47:02.740569499 +0000
++++ b/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts	2026-07-27 19:31:57.993934489 +0000
 @@ -3,10 +3,16 @@
    segmentToSegmentMinDistance,
  } from "@tscircuit/math-utils"
@@ -581,9 +644,9 @@ diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts b/lib/solve
          !obstacleAppliesToSegment(obstacle, segment)
        ) {
          continue
-diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/types.ts b/lib/solvers/GlobalDrcForceImproveSolver/types.ts
---- a/lib/solvers/GlobalDrcForceImproveSolver/types.ts	2026-07-27 19:03:45.489531706 +0000
-+++ b/lib/solvers/GlobalDrcForceImproveSolver/types.ts	2026-07-27 19:14:14.181400045 +0000
+diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolver/types.ts b/lib/solvers/GlobalDrcForceImproveSolver/types.ts
+--- a/lib/solvers/GlobalDrcForceImproveSolver/types.ts	2026-07-27 18:47:02.740569499 +0000
++++ b/lib/solvers/GlobalDrcForceImproveSolver/types.ts	2026-07-27 19:31:57.993827838 +0000
 @@ -30,6 +30,15 @@
    enableTargetedErrorSweep?: boolean
    enablePostSolveClearanceRelaxation?: boolean
