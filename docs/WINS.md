@@ -61,6 +61,19 @@ perf-audit-2026-07-23.md. Baselines: main @ v0.0.714 (b7b243cc), 64-thread x86, 
      1053687 / s8 1973601 exact, DRC 0/41); 17 predeclared stash fields populated per
      dequeue + self-repopulate guard; single-run walls flat (38.0/96.1s) — effect inside
      noise, gauntlet resolves.
+  9c. **2026-07-27 — RUST GATE B: NEGATIVE RESULT, recorded per kill criteria (903b4be5).**
+     TS_NATIVE_PORTFOLIO wired (flag-off verified inert, s5 anchor exact). HD-stage at 8
+     threads vs sequential: s5 7.5→80.3s, s8 38.4→247.5s, s6 129.4→194.7s — SLOWER
+     everywhere; quality exactly replay-class (s8 DRC 40 vs 41, s6 98 vs 100). Diagnosis:
+     run-to-completion selection semantics pay full price for every doomed candidate the
+     sequential fitness schedule abandons ~free; the ~9x+ work multiplier swamps 8 threads.
+     The PORT is sound (per-unit-work Rust ≈1.4x JSC; FFI overhead minor — native tracks
+     the TS replay path's economics, which stage-1 already measured 3.8x slower). Fourth
+     confirmation of the campaign's parallelism law: only schedule-aware or data-selected
+     parallelism pays; brute run-everything doesn't, in any language. Credible follow-up
+     if ever wanted: in-process incremental replay early-exit (TS stage-2 proved it
+     hash-identical, ≤24/70 candidates dispatched on 60% of nodes; died only on worker
+     transport, which threads eliminate) → est. ~4x potential; NOT built, per kill criteria.
   9b. **2026-07-27 — RUST GATE A PASSED: the full portfolio core is bit-exact vs the TS
      solver.** Crate native/portfolio-core (~7,700 lines, 3 parallel port agents + spec,
      compiled FIRST TRY with zero integration fixes, 26/26 unit tests). Golden parity over

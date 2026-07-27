@@ -95,3 +95,21 @@ can't beat the sequential supervisor with zero transport cost, tt-metal (with
 real transport costs and a research-grade toolchain) certainly won't; if they
 do, the TT port has a proven work model, a golden-output harness, and measured
 speedup curves to beat. Keep TT exploratory until §1's gates report.
+
+## GATE OUTCOMES (2026-07-27)
+
+- **Gate A: PASSED.** native/portfolio-core (~7,700 LOC, 3 parallel port agents,
+  compiled first-try) is bit-exact vs the TS solver: 1221 nodes, 76,923 candidates,
+  0 winner / 0 candidate mismatches (6 golden records were torn-SAB capture artifacts,
+  census-proven). Two systematic finds: engine Math.round ≠ floor(x+0.5) in the 1-ulp
+  window; recorded budgets ToInt32-truncated by the replay transport.
+- **Gate B: FAILED — negative result recorded (903b4be5), stopped per kill criteria.**
+  HD-stage at 8 threads: 1.5-10.7x SLOWER. Run-to-completion semantics carry the full
+  doomed-candidate cost the sequential schedule avoids; ~9x+ work multiplier swamps the
+  threads. Port itself sound (~1.4x per-unit-work vs JSC, FFI minor). §1's premise
+  "transport was the only killer" was HALF right — transport is indeed gone, but the
+  P2 stage-1 work-multiplier lesson applied with full force.
+- **If revisited**: in-process incremental replay early-exit (stage-2 semantics,
+  hash-identical, ≤24/70 dispatch on 60% of nodes) is the one arithmetic that still
+  works: ~9x → ~2-3x work × 8 threads × 1.4 kernel ≈ 4x. It is a fifth experiment,
+  not a default.
