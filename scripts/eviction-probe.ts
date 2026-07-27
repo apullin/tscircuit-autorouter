@@ -8,6 +8,10 @@
  *   bun scripts/eviction-probe.ts --dataset srj18 --sample 8
  *   TS_EVICT_REPATH=1 bun scripts/eviction-probe.ts --dataset srj18 --sample 8
  */
+import {
+  DRC_EVAL_STATS_ENABLED,
+  getDrcEvalStatsSummary,
+} from "high-density-repair03/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats"
 import { AutoroutingPipelineSolver7_MultiGraph } from "../lib/autorouter-pipelines/AutoroutingPipeline7_MultiGraph/AutoroutingPipelineSolver7_MultiGraph"
 import { evaluateRelaxedDrc } from "../lib/testing/evaluate-relaxed-drc"
 import {
@@ -44,6 +48,10 @@ const pipeline = new AutoroutingPipelineSolver7_MultiGraph(
 const t0 = Date.now()
 pipeline.solve()
 const wallS = (Date.now() - t0) / 1000
+
+// Captured before the probe's own evaluateRelaxedDrc below so the summary
+// covers exactly the pipeline's DRC evaluations (TS_DRC_EVAL_STATS=1 only).
+const drcEvalStats = DRC_EVAL_STATS_ENABLED ? getDrcEvalStatsSummary() : null
 
 const evictionStats = pipeline.highDensityRouteSolver?.stats?.evictionRepath as
   | {
@@ -101,6 +109,21 @@ console.log(
       hdStageWallS: pipeline.timeSpentOnPhase?.highDensityRouteSolver
         ? +(pipeline.timeSpentOnPhase.highDensityRouteSolver / 1000).toFixed(1)
         : null,
+      drcStage1WallS:
+        pipeline.timeSpentOnPhase?.globalDrcForceImproveSolver !== undefined
+          ? +(
+              pipeline.timeSpentOnPhase.globalDrcForceImproveSolver / 1000
+            ).toFixed(2)
+          : null,
+      drcStage2WallS:
+        pipeline.timeSpentOnPhase?.exactGeometryDrcForceImproveSolver !==
+        undefined
+          ? +(
+              pipeline.timeSpentOnPhase.exactGeometryDrcForceImproveSolver /
+              1000
+            ).toFixed(2)
+          : null,
+      drcEvalStats,
       evictionStats: evictionStats
         ? {
             applied: evictionStats.evictionsApplied,

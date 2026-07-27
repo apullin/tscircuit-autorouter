@@ -18,6 +18,11 @@ import {
   getFullConnectivityMapFromCircuitJson,
 } from "circuit-json-to-connectivity-map"
 import { Point } from "graphics-debug"
+import {
+  DRC_EVAL_STATS_ENABLED,
+  noteDrcEval,
+  noteDrcEvalMs,
+} from "high-density-repair03/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats"
 
 type CircuitJson = AnyCircuitElement[]
 type CircuitJsonElement = CircuitJson[number]
@@ -108,10 +113,20 @@ export const getDrcErrors = (
   circuitJson: CircuitJson,
   options: GetDrcErrorsOptions = {},
 ): GetDrcErrorsResult => {
+  // TS_DRC_EVAL_STATS=1 per-step wall timers (drcEvalStats singleton, shared
+  // with the high-density-repair03 snapshot counters). Off: dead branches.
+  const statsT0 = DRC_EVAL_STATS_ENABLED ? performance.now() : 0
+  let statsPrev = statsT0
   const connMap = createDrcConnectivityMap(
     circuitJson,
     options.connectivityCache,
   )
+  if (DRC_EVAL_STATS_ENABLED) {
+    noteDrcEval("getDrcErrors")
+    const now = performance.now()
+    noteDrcEvalMs("getDrcErrors.connMap", now - statsPrev)
+    statsPrev = now
+  }
   const viaClearance = Math.max(
     options.viaClearance ?? MIN_VIA_TO_VIA_CLEARANCE,
     MIN_VIA_TO_VIA_CLEARANCE,
@@ -120,6 +135,11 @@ export const getDrcErrors = (
     connMap,
     minClearance: options.traceClearance,
   })
+  if (DRC_EVAL_STATS_ENABLED) {
+    const now = performance.now()
+    noteDrcEvalMs("getDrcErrors.checkTraceOverlap", now - statsPrev)
+    statsPrev = now
+  }
   const includeTypedTraceClearance =
     options.includeTypedTraceClearance !== false
   const viaTraceErrors = includeTypedTraceClearance
@@ -128,12 +148,22 @@ export const getDrcErrors = (
         minClearance: options.traceClearance,
       })
     : []
+  if (DRC_EVAL_STATS_ENABLED) {
+    const now = performance.now()
+    noteDrcEvalMs("getDrcErrors.checkViaTrace", now - statsPrev)
+    statsPrev = now
+  }
   const padTraceErrors = includeTypedTraceClearance
     ? checkPadTraceClearance(circuitJson, {
         connMap,
         minClearance: options.traceClearance,
       })
     : []
+  if (DRC_EVAL_STATS_ENABLED) {
+    const now = performance.now()
+    noteDrcEvalMs("getDrcErrors.checkPadTrace", now - statsPrev)
+    statsPrev = now
+  }
   const viaErrors = [
     ...checkSameNetViaSpacing(circuitJson, {
       connMap,
@@ -144,12 +174,27 @@ export const getDrcErrors = (
       minClearance: viaClearance,
     }),
   ]
+  if (DRC_EVAL_STATS_ENABLED) {
+    const now = performance.now()
+    noteDrcEvalMs("getDrcErrors.checkViaSpacing", now - statsPrev)
+    statsPrev = now
+  }
+
+  // Hoisted out of the array literal (unchanged execution effect: spreading
+  // the precomputed arrays has no side effects) so the check is timeable.
+  const contiguityErrors =
+    options.includeTraceContinuity === false
+      ? []
+      : checkTracesAreContiguous(circuitJson)
+  if (DRC_EVAL_STATS_ENABLED) {
+    const now = performance.now()
+    noteDrcEvalMs("getDrcErrors.checkContiguity", now - statsPrev)
+    statsPrev = now
+  }
 
   const errors: DrcError[] = [
     ...traceErrors,
-    ...(options.includeTraceContinuity === false
-      ? []
-      : checkTracesAreContiguous(circuitJson)),
+    ...contiguityErrors,
     ...viaTraceErrors,
     ...padTraceErrors,
     ...viaErrors,
@@ -244,6 +289,12 @@ export const getDrcErrors = (
   const locationAwareErrors = errorsWithCenters.filter(
     (error): error is LocationAwareDrcError => Boolean(error.center),
   )
+
+  if (DRC_EVAL_STATS_ENABLED) {
+    const now = performance.now()
+    noteDrcEvalMs("getDrcErrors.decorateCenters", now - statsPrev)
+    noteDrcEvalMs("getDrcErrors.total", now - statsT0)
+  }
 
   return {
     errors,

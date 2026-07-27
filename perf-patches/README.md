@@ -121,6 +121,34 @@ rm+cp also works. Never edit in place.
 - bun-high-density-repair03.patch — sharesNet lookup reduction (5→2 per pair),
   createObstacleNetMatcher hoisted per obstacle in pushMovablesAwayFromObstacles.
   Equivalence verified by exhaustive small-case harness.
+  2026-07-27 (perf/drc-p0, identity-safe): adds TS_DRC_EVAL_STATS=1
+  instrumentation — new drcEvalStats.ts process-global counter/timer
+  singleton (also imported by repo-side lib/testing DRC code), snapshot
+  call-site counters in GlobalDrcForceImproveSolver (tags: initial / detour /
+  terminal-via / via-in-pad / layer-move / sweep / force / broad-fallback /
+  final / relaxation, "internal."-prefixed when the solver has no
+  drcEvaluator) and GlobalDrcBranchPortfolioSolver (boundary.*), and
+  per-snapshot ms timers in getDrcSnapshot (connMapAwareSrj /
+  simplifiedTraces / evaluatorCall / internalDrc / total). Env unset =
+  constant-false dead branches. Verified: s5 1053687 / s8 1973601 EXACT,
+  DRC 0/41, output traces byte-identical, repo tsc clean.
+  2026-07-27 (perf/drc-p0 P0, result-identical): duplicate boundary
+  snapshot elimination — GlobalDrcForceImproveSolverParams gains optional
+  initialSnapshot (precomputed snapshot of exactly hdRoutes/drcEvaluator/
+  connMap, seeds outputSnapshot so the first _step skips the initial eval)
+  and the solver exposes getOutputSnapshot(); GlobalDrcBranchPortfolioSolver
+  threads its start/broad-input snapshots into the branch solvers, reads
+  branch finals from getOutputSnapshot() instead of recomputing, and reuses
+  the caller's snapshot for the via-in-pad gate when viaInPadDrcEvaluator
+  === drcEvaluator (the pipeline passes one shared closure). Same values,
+  computed once. Verified: s5 1053687 / s8 1973601 EXACT, DRC 0/41, output
+  traces byte-identical, repo tsc clean.
+  2026-07-27 (perf/drc-p0 P0-adjacent, result-identical): createSimplifiedTraces
+  builds a routes-by-connection Map in one pass instead of the per-connection
+  O(connections × routes) map+filter; trace output order preserved exactly
+  (group order follows the routes array, outer loop still follows
+  srj.connections). Verified: s5 1053687 / s8 1973601 EXACT, DRC 0/41,
+  output traces byte-identical, repo tsc clean.
 - bun-tscircuit-math-utils@0.0.36.patch (added 2026-07-26; npm-hosted →
   patchedDependencies applies it automatically) — the whole-dist diff of the
   two PR-ready branches in ~/personal/math-utils-fix: orientation() collinearity

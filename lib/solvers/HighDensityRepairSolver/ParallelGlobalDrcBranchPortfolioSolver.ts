@@ -1,7 +1,12 @@
 import { GlobalDrcForceImproveSolver } from "high-density-repair03/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver"
 import { GlobalDrcBranchPortfolioSolver } from "high-density-repair03/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolver"
 import { getDrcSnapshot } from "high-density-repair03/lib/solvers/GlobalDrcForceImproveSolver/drc-snapshot"
+import {
+  DRC_EVAL_STATS_ENABLED,
+  noteDrcEval,
+} from "high-density-repair03/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats"
 import { BROAD_FALLBACK_SMALL_ROUTE_LIMIT } from "high-density-repair03/lib/solvers/GlobalDrcForceImproveSolver/solverConfig"
+import type { DrcSnapshot } from "high-density-repair03/lib/solvers/GlobalDrcForceImproveSolver/types"
 import type { HighDensityRoute } from "high-density-repair03/lib/types/high-density-types"
 import { resolveA2Parallelism } from "../../parallel/autoEnable"
 import { runA2Branches } from "../../parallel/a2Pool"
@@ -61,22 +66,35 @@ export class ParallelGlobalDrcBranchPortfolioSolver extends GlobalDrcBranchPortf
     this.a2Done = true
   }
 
-  /** Replicates the sequential via-in-pad phase exactly (in-process). */
+  /**
+   * Replicates the sequential via-in-pad phase exactly (in-process).
+   * `routesSnapshot`, when given, must be the params.drcEvaluator snapshot of
+   * exactly `routes`; it substitutes for the gate snapshot when the
+   * via-in-pad evaluator IS the drc evaluator (the pipeline passes one
+   * shared closure), mirroring the sequential portfolio's snapshot reuse.
+   */
   private runViaInPadPhase(
     routes: HighDensityRoute[],
     countsSoFar: Parameters<ParallelGlobalDrcBranchPortfolioSolver["finishA2"]>[1],
+    routesSnapshot?: DrcSnapshot,
   ) {
     const params = this.params
     if (!params.enableViaInPadLayerMoves || !params.viaInPadDrcEvaluator) {
       this.finishA2(routes, countsSoFar, {})
       return
     }
-    const viaInPadInputSnapshot = getDrcSnapshot(
-      params.srj,
-      routes,
-      params.viaInPadDrcEvaluator,
-      params.connMap,
-    )
+    let viaInPadInputSnapshot: DrcSnapshot
+    if (routesSnapshot && params.viaInPadDrcEvaluator === params.drcEvaluator) {
+      viaInPadInputSnapshot = routesSnapshot
+    } else {
+      if (DRC_EVAL_STATS_ENABLED) noteDrcEval("boundary.viaInPadGate")
+      viaInPadInputSnapshot = getDrcSnapshot(
+        params.srj,
+        routes,
+        params.viaInPadDrcEvaluator,
+        params.connMap,
+      )
+    }
     if (
       this.inputHdRoutes.length > BROAD_FALLBACK_SMALL_ROUTE_LIMIT &&
       viaInPadInputSnapshot.count > 3
@@ -93,18 +111,27 @@ export class ParallelGlobalDrcBranchPortfolioSolver extends GlobalDrcBranchPortf
       enableTargetedErrorSweep: false,
       enablePostSolveClearanceRelaxation: false,
       enableViaInPadLayerMoves: true,
+      // The viaInPadDrcEvaluator snapshot of `routes` (directly computed, or
+      // routesSnapshot when the evaluators are the same closure).
+      initialSnapshot: viaInPadInputSnapshot,
     })
     viaInPadSolver.solve()
     if (viaInPadSolver.failed) {
       throw new Error(`via-in-pad DRC repair branch failed: ${viaInPadSolver.error}`)
     }
     const viaInPadRoutes = viaInPadSolver.getOutput()
-    const viaInPadSnapshot = getDrcSnapshot(
-      params.srj,
-      viaInPadRoutes,
-      params.viaInPadDrcEvaluator,
-      params.connMap,
-    )
+    // The solved solver's outputSnapshot matches what a recompute over
+    // viaInPadRoutes with params.viaInPadDrcEvaluator would produce.
+    let viaInPadSnapshot = viaInPadSolver.getOutputSnapshot()
+    if (!viaInPadSnapshot) {
+      if (DRC_EVAL_STATS_ENABLED) noteDrcEval("boundary.viaInPadFinal")
+      viaInPadSnapshot = getDrcSnapshot(
+        params.srj,
+        viaInPadRoutes,
+        params.viaInPadDrcEvaluator,
+        params.connMap,
+      )
+    }
     this.finishA2(
       viaInPadRoutes,
       { ...countsSoFar, finalCount: viaInPadSnapshot.count },
@@ -142,28 +169,40 @@ export class ParallelGlobalDrcBranchPortfolioSolver extends GlobalDrcBranchPortf
     }
 
     // 1. Input snapshot (in-process, as sequential "start" phase)
-    const inputSnapshot = getDrcSnapshot(
-      params.srj,
-      this.inputHdRoutes,
-      params.drcEvaluator,
-      params.connMap,
-    )
+    let inputSnapshot = params.initialSnapshot
+    if (!inputSnapshot) {
+      if (DRC_EVAL_STATS_ENABLED) noteDrcEval("boundary.input")
+      inputSnapshot = getDrcSnapshot(
+        params.srj,
+        this.inputHdRoutes,
+        params.drcEvaluator,
+        params.connMap,
+      )
+    }
     if (inputSnapshot.count === 0) {
-      this.runViaInPadPhase(this.inputHdRoutes, {
-        initialCount: 0,
-        finalCount: 0,
-      })
+      this.runViaInPadPhase(
+        this.inputHdRoutes,
+        {
+          initialCount: 0,
+          finalCount: 0,
+        },
+        inputSnapshot,
+      )
       return
     }
 
     // 2. Run baseline ∥ broad in workers (broad is speculative).
-    //    solverParams must exclude non-cloneable fields (functions).
+    //    solverParams must exclude non-cloneable fields (functions) and
+    //    initialSnapshot (only valid for the input routes under the parent's
+    //    evaluator closure; workers rebuild their own evaluator and the broad
+    //    branch runs on different routes).
     const {
       drcEvaluator: _d1,
       viaInPadDrcEvaluator: _d2,
       srj: _s,
       hdRoutes: _h,
       connMap: _c,
+      initialSnapshot: _i,
       ...solverParamsRest
     } = params as Record<string, unknown>
     const baselineSolverParams = {
