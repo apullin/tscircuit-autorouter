@@ -1,0 +1,32 @@
+[package]
+name = "portfolio-core"
+version = "0.1.0"
+edition = "2021"
+
+# M3 of native/PORT-SPEC.md section 8: portfolio runtime + FFI.
+#
+# Dependencies:
+#  - replay-core (path): the parity-proven winner-selection core. Selection is
+#    NOT reimplemented here; pf_run_portfolio encodes an in-memory RPLYDS01
+#    dataset and calls replay_core::replay_load/replay_run (see
+#    src/runtime.rs). A vendored, line-annotated copy of the simulator
+#    (src/replay_sim.rs) recovers the final virtual-iteration vector for the
+#    cache-commit step and is cross-checked against replay-core every node.
+#  - rayon (user-approved): candidate execution pool. NOTE: unlike replay-core
+#    this crate is not zero-dependency — the first `cargo build` fetches rayon
+#    from crates.io (or use a vendored registry for offline boxes).
+#
+# crossbeam is intentionally absent: the run-to-completion protocol has no
+# mid-run cross-thread streaming (see README "Threading design").
+
+[dependencies]
+replay-core = { path = "../replay-core" }
+rayon = "1"
+
+[lib]
+name = "portfolio_core"
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+# Mirrors ../replay-core/Cargo.toml (symbolized perf profiles).
+debug = true
