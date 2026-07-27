@@ -240,7 +240,7 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
          viaInPadSnapshot,
 diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts b/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts
 --- a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts	2026-07-27 18:47:02.703569216 +0000
-+++ b/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts	2026-07-27 19:31:57.994123735 +0000
++++ b/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts	2026-07-27 20:17:08.884707989 +0000
 @@ -1,6 +1,7 @@
  import { BaseSolver } from "../BaseSolver"
  import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
@@ -249,7 +249,25 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
  import {
    BROAD_FALLBACK_SMALL_ROUTE_LIMIT,
    EXTENDED_BROAD_FORCE_PASS_MULTIPLIER,
-@@ -105,6 +106,10 @@
+@@ -24,12 +25,17 @@
+   applyTracePairLayerMoveForError,
+   applyViaInPadLayerMoveForError,
+   cloneRoutes,
++  evaluateDrcCandidate,
+   getCenteredErrors,
+   getDrcSnapshot,
+   getTargetedClearanceSweepErrors,
+   getViaDrcIssueCount,
++  isBetterDrcAggregates,
+   isBetterDrcSnapshot,
+   materializeRoutes,
++  resolveCandidateSnapshot,
++  type DrcCandidateBase,
++  type DrcCandidateEvaluation,
+ } from "./solverHelpers"
+ import { applyTraceToPadClearanceRelaxation } from "./traceToPadClearanceRelaxation"
+ import { applyViaToPadClearanceRelaxation } from "./viaToPadClearanceRelaxation"
+@@ -105,6 +111,10 @@
        params.enablePostSolveClearanceRelaxation ?? true
      this.enableViaInPadLayerMoves = params.enableViaInPadLayerMoves ?? false
      this.outputHdRoutes = params.hdRoutes
@@ -260,7 +278,7 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
      this.MAX_ITERATIONS =
        this.configuredMaxIterations ?? getBaseMaxIterations(this.effort)
    }
-@@ -128,6 +133,16 @@
+@@ -128,6 +138,56 @@
      ] as const
    }
  
@@ -274,10 +292,50 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
 +    noteDrcEval(this.drcEvaluator ? tag : `internal.${tag}`)
 +  }
 +
++  /**
++   * Per-candidate evaluation through the incremental-DRC seam
++   * (solverHelpers.evaluateDrcCandidate). With TS_INCREMENTAL_DRC unset this
++   * is exactly the old `getDrcSnapshot + getViaDrcIssueCount` pair; with the
++   * flag on it returns delta-screened aggregates without a snapshot, and
++   * resolveCandidate materializes the one full snapshot needed on
++   * acceptance.
++   */
++  private evaluateCandidate(
++    candidateRoutes: HighDensityRoute[],
++    screenBase: DrcCandidateBase,
++    comparison: { count: number; issueScore: number; viaIssueCount: number },
++    tag: string,
++  ): DrcCandidateEvaluation {
++    return evaluateDrcCandidate({
++      srj: this.srj,
++      candidateRoutes,
++      drcEvaluator: this.drcEvaluator,
++      connMap: this.connMap,
++      base: screenBase,
++      comparison,
++      tag,
++    })
++  }
++
++  private resolveCandidate(
++    candidateRoutes: HighDensityRoute[],
++    evaluation: DrcCandidateEvaluation,
++  ) {
++    return resolveCandidateSnapshot(
++      {
++        srj: this.srj,
++        candidateRoutes,
++        drcEvaluator: this.drcEvaluator,
++        connMap: this.connMap,
++      },
++      evaluation,
++    )
++  }
++
    private updateStats(snapshot: DrcSnapshot) {
      this.stats = {
        initialDrcIssueCount: this.initialDrcIssueCount ?? snapshot.count,
-@@ -178,6 +193,9 @@
+@@ -178,6 +238,9 @@
            this.connMap,
          )
        : routes
@@ -287,7 +345,7 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
      const relaxedSnapshot =
        relaxedRoutes === routes
          ? snapshot
-@@ -257,6 +275,9 @@
+@@ -257,6 +320,9 @@
  
    override _step() {
      let bestRoutes = this.outputHdRoutes
@@ -297,55 +355,410 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
      let bestSnapshot =
        this.outputSnapshot ??
        getDrcSnapshot(this.srj, bestRoutes, this.drcEvaluator, this.connMap)
-@@ -378,6 +399,7 @@
+@@ -275,6 +341,15 @@
+     let bestIssueCount = bestSnapshot.count
+     let bestIssueScore = bestSnapshot.issueScore
+     let bestViaIssueCount = getViaDrcIssueCount(bestSnapshot)
++    // Base for incremental candidate screens: every candidate this step is
++    // built from cloneRoutes(bestRoutes) of THESE step-initial values (all
++    // accept paths either break out of the candidate loops or gate them via
++    // acceptedCandidate), so the screen base stays valid for the whole step.
++    const screenBase: DrcCandidateBase = {
++      routes: bestRoutes,
++      snapshot: bestSnapshot,
++      viaIssueCount: bestViaIssueCount,
++    }
+     const centeredErrors = getCenteredErrors(bestSnapshot.errors)
+     if (centeredErrors.length === 0) {
+       this.acceptSolvedRoutes(bestRoutes, bestSnapshot)
+@@ -378,20 +453,32 @@
            this.viaInPadCandidateAttempts += 1
            candidateAttemptsThisStep += 1
            this.candidateAttempts += 1
+-          const candidateSnapshot = getDrcSnapshot(
+-            this.srj,
+-            materializedCandidateRoutes,
+-            this.drcEvaluator,
+-            this.connMap,
+-          )
+-          const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
 +          if (DRC_EVAL_STATS_ENABLED) this.noteEvalStats("detour")
-           const candidateSnapshot = getDrcSnapshot(
-             this.srj,
-             materializedCandidateRoutes,
-@@ -415,6 +437,7 @@
+           const comparisonCount =
+             bestViaInPadCandidate?.snapshot.count ?? bestIssueCount
+-          if (candidateSnapshot.count < comparisonCount) {
+-            bestViaInPadCandidate = {
+-              routes: materializedCandidateRoutes,
++          const candidateEval = this.evaluateCandidate(
++            materializedCandidateRoutes,
++            screenBase,
++            {
++              count: comparisonCount,
++              issueScore:
++                bestViaInPadCandidate?.snapshot.issueScore ?? bestIssueScore,
++              viaIssueCount:
++                bestViaInPadCandidate?.viaIssueCount ?? bestViaIssueCount,
++            },
++            "detour",
++          )
++          if (candidateEval.count < comparisonCount) {
++            const {
+               snapshot: candidateSnapshot,
+               viaIssueCount: candidateViaIssueCount,
++            } = this.resolveCandidate(materializedCandidateRoutes, candidateEval)
++            if (candidateSnapshot.count < comparisonCount) {
++              bestViaInPadCandidate = {
++                routes: materializedCandidateRoutes,
++                snapshot: candidateSnapshot,
++                viaIssueCount: candidateViaIssueCount,
++              }
+             }
+           }
+         }
+@@ -415,33 +502,52 @@
          this.viaInPadCandidateAttempts += 1
          candidateAttemptsThisStep += 1
          this.candidateAttempts += 1
+-        const candidateSnapshot = getDrcSnapshot(
+-          this.srj,
+-          materializedCandidateRoutes,
+-          this.drcEvaluator,
+-          this.connMap,
+-        )
+-        const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
 +        if (DRC_EVAL_STATS_ENABLED) this.noteEvalStats("terminal-via")
-         const candidateSnapshot = getDrcSnapshot(
-           this.srj,
-           materializedCandidateRoutes,
-@@ -463,6 +486,7 @@
+         const comparisonCount =
+           bestViaInPadCandidate?.snapshot.count ?? bestIssueCount
+         const comparisonScore =
+           bestViaInPadCandidate?.snapshot.issueScore ?? bestIssueScore
+         const comparisonViaIssueCount =
+           bestViaInPadCandidate?.viaIssueCount ?? bestViaIssueCount
++        const candidateEval = this.evaluateCandidate(
++          materializedCandidateRoutes,
++          screenBase,
++          {
++            count: comparisonCount,
++            issueScore: comparisonScore,
++            viaIssueCount: comparisonViaIssueCount,
++          },
++          "terminal-via",
++        )
+ 
+         if (
+-          isBetterDrcSnapshot(
+-            candidateSnapshot,
+-            candidateViaIssueCount,
++          isBetterDrcAggregates(
++            candidateEval.count,
++            candidateEval.issueScore,
++            candidateEval.viaIssueCount,
+             comparisonCount,
+             comparisonScore,
+             comparisonViaIssueCount,
+           )
+         ) {
+-          bestViaInPadCandidate = {
+-            routes: materializedCandidateRoutes,
++          const {
+             snapshot: candidateSnapshot,
+             viaIssueCount: candidateViaIssueCount,
++          } = this.resolveCandidate(materializedCandidateRoutes, candidateEval)
++          if (
++            isBetterDrcSnapshot(
++              candidateSnapshot,
++              candidateViaIssueCount,
++              comparisonCount,
++              comparisonScore,
++              comparisonViaIssueCount,
++            )
++          ) {
++            bestViaInPadCandidate = {
++              routes: materializedCandidateRoutes,
++              snapshot: candidateSnapshot,
++              viaIssueCount: candidateViaIssueCount,
++            }
+           }
+         }
+       }
+@@ -463,33 +569,52 @@
          this.viaInPadCandidateAttempts += 1
          candidateAttemptsThisStep += 1
          this.candidateAttempts += 1
+-        const candidateSnapshot = getDrcSnapshot(
+-          this.srj,
+-          materializedCandidateRoutes,
+-          this.drcEvaluator,
+-          this.connMap,
+-        )
+-        const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
 +        if (DRC_EVAL_STATS_ENABLED) this.noteEvalStats("via-in-pad")
-         const candidateSnapshot = getDrcSnapshot(
-           this.srj,
-           materializedCandidateRoutes,
-@@ -519,6 +543,7 @@
+         const comparisonCount =
+           bestViaInPadCandidate?.snapshot.count ?? bestIssueCount
+         const comparisonScore =
+           bestViaInPadCandidate?.snapshot.issueScore ?? bestIssueScore
+         const comparisonViaIssueCount =
+           bestViaInPadCandidate?.viaIssueCount ?? bestViaIssueCount
++        const candidateEval = this.evaluateCandidate(
++          materializedCandidateRoutes,
++          screenBase,
++          {
++            count: comparisonCount,
++            issueScore: comparisonScore,
++            viaIssueCount: comparisonViaIssueCount,
++          },
++          "via-in-pad",
++        )
+ 
+         if (
+-          isBetterDrcSnapshot(
+-            candidateSnapshot,
+-            candidateViaIssueCount,
++          isBetterDrcAggregates(
++            candidateEval.count,
++            candidateEval.issueScore,
++            candidateEval.viaIssueCount,
+             comparisonCount,
+             comparisonScore,
+             comparisonViaIssueCount,
+           )
+         ) {
+-          bestViaInPadCandidate = {
+-            routes: materializedCandidateRoutes,
++          const {
+             snapshot: candidateSnapshot,
+             viaIssueCount: candidateViaIssueCount,
++          } = this.resolveCandidate(materializedCandidateRoutes, candidateEval)
++          if (
++            isBetterDrcSnapshot(
++              candidateSnapshot,
++              candidateViaIssueCount,
++              comparisonCount,
++              comparisonScore,
++              comparisonViaIssueCount,
++            )
++          ) {
++            bestViaInPadCandidate = {
++              routes: materializedCandidateRoutes,
++              snapshot: candidateSnapshot,
++              viaIssueCount: candidateViaIssueCount,
++            }
+           }
+         }
+       }
+@@ -519,34 +644,55 @@
              this.viaInPadCandidateAttempts += 1
              candidateAttemptsThisStep += 1
              this.candidateAttempts += 1
+-            const candidateSnapshot = getDrcSnapshot(
+-              this.srj,
+-              materializedCandidateRoutes,
+-              this.drcEvaluator,
+-              this.connMap,
+-            )
+-            const candidateViaIssueCount =
+-              getViaDrcIssueCount(candidateSnapshot)
 +            if (DRC_EVAL_STATS_ENABLED) this.noteEvalStats("layer-move")
-             const candidateSnapshot = getDrcSnapshot(
-               this.srj,
-               materializedCandidateRoutes,
-@@ -584,6 +609,7 @@
+             const comparisonCount =
+               bestViaInPadCandidate?.snapshot.count ?? bestIssueCount
+             const comparisonScore =
+               bestViaInPadCandidate?.snapshot.issueScore ?? bestIssueScore
+             const comparisonViaIssueCount =
+               bestViaInPadCandidate?.viaIssueCount ?? bestViaIssueCount
++            const candidateEval = this.evaluateCandidate(
++              materializedCandidateRoutes,
++              screenBase,
++              {
++                count: comparisonCount,
++                issueScore: comparisonScore,
++                viaIssueCount: comparisonViaIssueCount,
++              },
++              "layer-move",
++            )
+ 
+             if (
+-              isBetterDrcSnapshot(
+-                candidateSnapshot,
+-                candidateViaIssueCount,
++              isBetterDrcAggregates(
++                candidateEval.count,
++                candidateEval.issueScore,
++                candidateEval.viaIssueCount,
+                 comparisonCount,
+                 comparisonScore,
+                 comparisonViaIssueCount,
+               )
+             ) {
+-              bestViaInPadCandidate = {
+-                routes: materializedCandidateRoutes,
++              const {
+                 snapshot: candidateSnapshot,
+                 viaIssueCount: candidateViaIssueCount,
++              } = this.resolveCandidate(
++                materializedCandidateRoutes,
++                candidateEval,
++              )
++              if (
++                isBetterDrcSnapshot(
++                  candidateSnapshot,
++                  candidateViaIssueCount,
++                  comparisonCount,
++                  comparisonScore,
++                  comparisonViaIssueCount,
++                )
++              ) {
++                bestViaInPadCandidate = {
++                  routes: materializedCandidateRoutes,
++                  snapshot: candidateSnapshot,
++                  viaIssueCount: candidateViaIssueCount,
++                }
+               }
+             }
+           }
+@@ -584,33 +730,52 @@
          const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
          candidateAttemptsThisStep += 1
          this.candidateAttempts += 1
+-        const candidateSnapshot = getDrcSnapshot(
+-          this.srj,
 +        if (DRC_EVAL_STATS_ENABLED) this.noteEvalStats("sweep")
-         const candidateSnapshot = getDrcSnapshot(
-           this.srj,
++        const candidateEval = this.evaluateCandidate(
            materializedCandidateRoutes,
-@@ -646,6 +672,7 @@
+-          this.drcEvaluator,
+-          this.connMap,
++          screenBase,
++          {
++            count: bestIssueCount,
++            issueScore: bestIssueScore,
++            viaIssueCount: bestViaIssueCount,
++          },
++          "sweep",
+         )
+-        const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
+ 
+         if (
+-          isBetterDrcSnapshot(
+-            candidateSnapshot,
+-            candidateViaIssueCount,
++          isBetterDrcAggregates(
++            candidateEval.count,
++            candidateEval.issueScore,
++            candidateEval.viaIssueCount,
+             bestIssueCount,
+             bestIssueScore,
+             bestViaIssueCount,
+           )
+         ) {
+-          bestRoutes = materializedCandidateRoutes
+-          bestSnapshot = candidateSnapshot
+-          bestIssueCount = candidateSnapshot.count
+-          bestIssueScore = candidateSnapshot.issueScore
+-          bestViaIssueCount = candidateViaIssueCount
+-          this.targetedForceAccepted = true
+-          acceptedCandidate = true
+-          if (candidateSnapshot.count === 0) {
+-            this.acceptSolvedRoutes(bestRoutes, bestSnapshot)
+-            return
++          const {
++            snapshot: candidateSnapshot,
++            viaIssueCount: candidateViaIssueCount,
++          } = this.resolveCandidate(materializedCandidateRoutes, candidateEval)
++          if (
++            isBetterDrcSnapshot(
++              candidateSnapshot,
++              candidateViaIssueCount,
++              bestIssueCount,
++              bestIssueScore,
++              bestViaIssueCount,
++            )
++          ) {
++            bestRoutes = materializedCandidateRoutes
++            bestSnapshot = candidateSnapshot
++            bestIssueCount = candidateSnapshot.count
++            bestIssueScore = candidateSnapshot.issueScore
++            bestViaIssueCount = candidateViaIssueCount
++            this.targetedForceAccepted = true
++            acceptedCandidate = true
++            if (candidateSnapshot.count === 0) {
++              this.acceptSolvedRoutes(bestRoutes, bestSnapshot)
++              return
++            }
+           }
+         }
+       }
+@@ -646,35 +811,54 @@
          const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
          candidateAttemptsThisStep += 1
          this.candidateAttempts += 1
+-        const candidateSnapshot = getDrcSnapshot(
+-          this.srj,
 +        if (DRC_EVAL_STATS_ENABLED) this.noteEvalStats("force")
-         const candidateSnapshot = getDrcSnapshot(
-           this.srj,
++        const candidateEval = this.evaluateCandidate(
            materializedCandidateRoutes,
-@@ -710,6 +737,7 @@
+-          this.drcEvaluator,
+-          this.connMap,
++          screenBase,
++          {
++            count: bestIssueCount,
++            issueScore: bestIssueScore,
++            viaIssueCount: bestViaIssueCount,
++          },
++          "force",
+         )
+-        const candidateViaIssueCount = getViaDrcIssueCount(candidateSnapshot)
+ 
+         if (
+-          isBetterDrcSnapshot(
+-            candidateSnapshot,
+-            candidateViaIssueCount,
++          isBetterDrcAggregates(
++            candidateEval.count,
++            candidateEval.issueScore,
++            candidateEval.viaIssueCount,
+             bestIssueCount,
+             bestIssueScore,
+             bestViaIssueCount,
+           )
+         ) {
+-          bestRoutes = materializedCandidateRoutes
+-          bestSnapshot = candidateSnapshot
+-          bestIssueCount = candidateSnapshot.count
+-          bestIssueScore = candidateSnapshot.issueScore
+-          bestViaIssueCount = candidateViaIssueCount
+-          this.targetedForceAccepted = true
+-          acceptedCandidate = true
+-          if (candidateSnapshot.count === 0) {
+-            this.acceptSolvedRoutes(bestRoutes, bestSnapshot)
+-            return
++          const {
++            snapshot: candidateSnapshot,
++            viaIssueCount: candidateViaIssueCount,
++          } = this.resolveCandidate(materializedCandidateRoutes, candidateEval)
++          if (
++            isBetterDrcSnapshot(
++              candidateSnapshot,
++              candidateViaIssueCount,
++              bestIssueCount,
++              bestIssueScore,
++              bestViaIssueCount,
++            )
++          ) {
++            bestRoutes = materializedCandidateRoutes
++            bestSnapshot = candidateSnapshot
++            bestIssueCount = candidateSnapshot.count
++            bestIssueScore = candidateSnapshot.issueScore
++            bestViaIssueCount = candidateViaIssueCount
++            this.targetedForceAccepted = true
++            acceptedCandidate = true
++            if (candidateSnapshot.count === 0) {
++              this.acceptSolvedRoutes(bestRoutes, bestSnapshot)
++              return
++            }
++            break
+           }
+-          break
+         }
+       }
+ 
+@@ -710,6 +894,7 @@
            this.drcEvaluator === undefined,
          )
          if (broadCandidateRoutes === bestRoutes) continue
@@ -353,7 +766,7 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
          const broadCandidateSnapshot = getDrcSnapshot(
            this.srj,
            broadCandidateRoutes,
-@@ -762,6 +790,9 @@
+@@ -762,6 +947,9 @@
    }
  
    override tryFinalAcceptance() {
@@ -363,7 +776,7 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
      const snapshot =
        this.outputSnapshot ??
        getDrcSnapshot(
-@@ -777,6 +808,19 @@
+@@ -777,6 +965,19 @@
      return this.outputHdRoutes
    }
  
@@ -383,6 +796,49 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
    override visualize(): GraphicsObject {
      return registeredVisualizer?.(this) ?? super.visualize()
    }
+diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolver/incrementalDrc.ts b/lib/solvers/GlobalDrcForceImproveSolver/incrementalDrc.ts
+--- a/lib/solvers/GlobalDrcForceImproveSolver/incrementalDrc.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/lib/solvers/GlobalDrcForceImproveSolver/incrementalDrc.ts	2026-07-27 20:16:22.892249527 +0000
+@@ -0,0 +1,39 @@
++/**
++ * Env flags for incremental (delta) DRC candidate evaluation — design doc
++ * perf-artifacts/incremental-drc-design.md §3 D1.
++ *
++ * TS_INCREMENTAL_DRC=1
++ *   Enables delta screening of repair candidates: when the configured
++ *   drcEvaluator implements evaluateCandidateDelta, candidate snapshots are
++ *   screened via a pruned-input evaluation of only the dirty routes'
++ *   neighborhoods. Candidates that pass the screen trigger ONE full snapshot
++ *   before acceptance (the full snapshot stays the authority for the actual
++ *   accept decision and becomes the new comparison base, preserving error
++ *   ordering for the targeting cursors). Default OFF: with the flag unset
++ *   every code path below is a dead branch and behavior is byte-identical
++ *   to before.
++ *
++ * TS_INCREMENTAL_DRC_VERIFY=1 (requires TS_INCREMENTAL_DRC=1)
++ *   Computes BOTH the delta aggregates and the full snapshot per screened
++ *   candidate, asserts (count, issueScore, viaIssueCount) equality and
++ *   decision agreement, and throws with full context on mismatch. Decisions
++ *   in verify mode always come from the full snapshot, so a verify run
++ *   makes exactly the same accept/reject choices as a flag-off run.
++ */
++export const INCREMENTAL_DRC_ENABLED =
++  typeof process !== "undefined" && process.env?.TS_INCREMENTAL_DRC === "1"
++
++export const INCREMENTAL_DRC_VERIFY =
++  INCREMENTAL_DRC_ENABLED &&
++  typeof process !== "undefined" &&
++  process.env?.TS_INCREMENTAL_DRC_VERIFY === "1"
++
++/**
++ * issueScore is a float sum of per-error severities; summation order differs
++ * between the full path (error-list order) and the delta path (base score
++ * minus removed plus added). Aggregate differences at or below this
++ * tolerance with equal counts are floating-point summation noise, not logic
++ * errors; verify mode counts them separately and still throws if the
++ * accept/reject decision could differ.
++ */
++export const INCREMENTAL_DRC_SCORE_NOISE_TOLERANCE = 1e-6
 diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts b/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts
 --- a/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts	2026-07-27 18:47:02.703569216 +0000
 +++ b/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts	2026-07-27 20:07:46.846606352 +0000
@@ -502,8 +958,8 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
    obstacle: SimpleRouteJson["obstacles"][number],
 diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts b/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts
 --- a/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts	2026-07-27 18:47:02.740569499 +0000
-+++ b/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts	2026-07-27 19:31:57.993934489 +0000
-@@ -3,10 +3,16 @@
++++ b/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts	2026-07-27 20:17:08.882071202 +0000
+@@ -3,10 +3,21 @@
    segmentToSegmentMinDistance,
  } from "@tscircuit/math-utils"
  import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
@@ -513,6 +969,11 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
 +  noteDrcEvalMs,
 +} from "./drcEvalStats"
  import { RELAXED_DRC_OPTIONS } from "./drcPresets"
++import {
++  INCREMENTAL_DRC_ENABLED,
++  INCREMENTAL_DRC_SCORE_NOISE_TOLERANCE,
++  INCREMENTAL_DRC_VERIFY,
++} from "./incrementalDrc"
  import { PREFERRED_VIA_TO_VIA_CLEARANCE, getDrcErrors } from "./getDrcErrors"
  import { convertToCircuitJson } from "../utils/convertToCircuitJson"
  import {
@@ -520,7 +981,20 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
    getConnMapAwareSrj,
    getRootConnectionName,
    obstacleSharesNet,
-@@ -90,10 +96,27 @@
+@@ -33,7 +44,11 @@
+   expandBounds2d,
+   getSpatialCandidateIndexes,
+ } from "./spatialIndex"
+-import type { DrcEvaluator, DrcSnapshot } from "./types"
++import type {
++  DrcCandidateDeltaAggregates,
++  DrcEvaluator,
++  DrcSnapshot,
++} from "./types"
+ import type {
+   Bounds2D,
+   MutableRoute,
+@@ -90,10 +105,27 @@
    const traces: SimplifiedPcbTraces = []
    const traceRouteIndexById = new Map<string, number>()
  
@@ -551,7 +1025,16 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
  
      for (let i = 0; i < hdRoutes.length; i += 1) {
        const hdRoute = hdRoutes[i]
-@@ -160,13 +183,24 @@
+@@ -128,7 +160,7 @@
+   return { traces, traceRouteIndexById }
+ }
+ 
+-const getDrcErrorSeverity = (error: Record<string, unknown>) => {
++export const getDrcErrorSeverity = (error: Record<string, unknown>) => {
+   const message = typeof error.message === "string" ? error.message : ""
+   const gapMatch = message.match(/gap: (-?\d+(?:\.\d+)?)mm/)
+   const requiredMatch = message.match(/required: (-?\d+(?:\.\d+)?)mm/)
+@@ -160,13 +192,24 @@
    drcEvaluator?: DrcEvaluator,
    connMap?: ConnectivityMap,
  ): DrcSnapshot => {
@@ -576,7 +1059,7 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
  
    if (drcResult) {
      const errors = Array.isArray(drcResult) ? drcResult : drcResult.errors
-@@ -174,7 +208,7 @@
+@@ -174,7 +217,7 @@
        ? drcResult
        : (drcResult.errorsWithCenters ?? drcResult.errors)
  
@@ -585,7 +1068,7 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
        errors: errorsWithCenters as Array<Record<string, unknown>>,
        count: errors.length,
        issueScore: getDrcIssueScore(
-@@ -182,6 +216,10 @@
+@@ -182,6 +225,10 @@
        ),
        traceRouteIndexById,
      }
@@ -596,7 +1079,7 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
    }
  
    const drc = getDrcErrors(
-@@ -200,7 +238,7 @@
+@@ -200,7 +247,7 @@
      },
    )
  
@@ -605,7 +1088,7 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
      errors:
        drc.errorsWithCenters.length > 0
          ? (drc.errorsWithCenters as unknown as Array<Record<string, unknown>>)
-@@ -213,6 +251,11 @@
+@@ -213,6 +260,11 @@
      ),
      traceRouteIndexById,
    }
@@ -617,7 +1100,7 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
  }
  
  export const collectViaNodes = (
-@@ -2516,6 +2559,8 @@
+@@ -2516,6 +2568,8 @@
    for (const obstacle of srj.obstacles) {
      if (obstacle.isCopperPour) continue
      const obstacleBounds = getObstacleBounds(obstacle)
@@ -626,7 +1109,7 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
  
      const nearbyViaIndexes = getSpatialCandidateIndexes(
        viaSpatialIndex,
-@@ -2525,7 +2570,7 @@
+@@ -2525,7 +2579,7 @@
      for (const viaIndex of nearbyViaIndexes) {
        const via = vias[viaIndex]
        if (!via) continue
@@ -635,7 +1118,7 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
        const repulsion = getRectRepulsion(
          via,
          obstacle,
-@@ -2552,7 +2597,7 @@
+@@ -2552,7 +2606,7 @@
        const segment = segments[segmentIndex]
        if (!segment) continue
        if (
@@ -644,10 +1127,360 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
          !obstacleAppliesToSegment(obstacle, segment)
        ) {
          continue
+@@ -2763,7 +2817,7 @@
+     .slice(0, maxErrors)
+ }
+ 
+-const isViaDrcError = (error: Record<string, unknown>) =>
++export const isViaDrcError = (error: Record<string, unknown>) =>
+   Array.isArray(error.pcb_via_ids) ||
+   (typeof error.pcb_error_id === "string" &&
+     (error.pcb_error_id.startsWith("same_net_vias_close_") ||
+@@ -3199,6 +3253,25 @@
+   return true
+ }
+ 
++/**
++ * The lexicographic (count, issueScore, viaIssueCount) comparison on plain
++ * aggregates. isBetterDrcSnapshot delegates here; the incremental screen
++ * (evaluateDrcCandidate) uses it directly on delta-predicted aggregates.
++ */
++export const isBetterDrcAggregates = (
++  candidateCount: number,
++  candidateIssueScore: number,
++  candidateViaIssueCount: number,
++  bestIssueCount: number,
++  bestIssueScore: number,
++  bestViaIssueCount: number,
++) =>
++  candidateCount < bestIssueCount ||
++  (candidateCount === bestIssueCount &&
++    candidateIssueScore < bestIssueScore) ||
++  (candidateCount === bestIssueCount &&
++    candidateViaIssueCount < bestViaIssueCount)
++
+ export const isBetterDrcSnapshot = (
+   candidateSnapshot: DrcSnapshot,
+   candidateViaIssueCount: number,
+@@ -3206,11 +3279,14 @@
+   bestIssueScore: number,
+   bestViaIssueCount: number,
+ ) =>
+-  candidateSnapshot.count < bestIssueCount ||
+-  (candidateSnapshot.count === bestIssueCount &&
+-    candidateSnapshot.issueScore < bestIssueScore) ||
+-  (candidateSnapshot.count === bestIssueCount &&
+-    candidateViaIssueCount < bestViaIssueCount)
++  isBetterDrcAggregates(
++    candidateSnapshot.count,
++    candidateSnapshot.issueScore,
++    candidateViaIssueCount,
++    bestIssueCount,
++    bestIssueScore,
++    bestViaIssueCount,
++  )
+ 
+ export const applyDrcErrorForces = (
+   srj: SimpleRouteJson,
+@@ -3370,3 +3446,239 @@
+ 
+   return changed
+ }
++
++/**
++ * Incremental DRC candidate screen (TS_INCREMENTAL_DRC=1, design doc §3 D1).
++ *
++ * evaluateDrcCandidate replaces the per-candidate `getDrcSnapshot +
++ * getViaDrcIssueCount` pair at the targeted-candidate call sites. With the
++ * flag off (or no delta-capable evaluator) it computes the full snapshot
++ * exactly as before and returns it alongside its aggregates, so behavior is
++ * unchanged. With the flag on it asks the evaluator's evaluateCandidateDelta
++ * for the candidate's absolute aggregates and skips the full snapshot; the
++ * caller performs the (identical) lexicographic comparison on the aggregates
++ * and, only if the candidate wins, materializes ONE full snapshot via
++ * resolveCandidateSnapshot — the full snapshot remains the authority for the
++ * actual acceptance and becomes the new comparison base, which preserves
++ * error ordering for the targeting cursors.
++ */
++export type DrcCandidateBase = {
++  routes: HighDensityRoute[]
++  snapshot: DrcSnapshot
++  viaIssueCount: number
++}
++
++export type DrcCandidateEvaluation = DrcCandidateDeltaAggregates & {
++  /** Present when a full snapshot was computed (flag off, fallback, verify). */
++  snapshot?: DrcSnapshot
++}
++
++/**
++ * Complete-by-construction dirty set: indexes whose route point geometry
++ * (x, y, z sequence) differs between base and candidate. Vias are derived
++ * from route points (materializeRoutes), and the trace conversion consumes
++ * only point geometry plus route-invariant metadata, so point-geometry
++ * equality implies DRC-visible equality. Returns undefined when the arrays
++ * are not comparable (different lengths) — callers fall back to full eval.
++ */
++export const getDirtyRouteIndexes = (
++  baseRoutes: HighDensityRoute[],
++  candidateRoutes: HighDensityRoute[],
++): number[] | undefined => {
++  if (baseRoutes.length !== candidateRoutes.length) return undefined
++  const dirtyRouteIndexes: number[] = []
++  for (let index = 0; index < baseRoutes.length; index += 1) {
++    const baseRoute = baseRoutes[index]!
++    const candidateRoute = candidateRoutes[index]!
++    if (baseRoute === candidateRoute) continue
++    const basePoints = baseRoute.route
++    const candidatePoints = candidateRoute.route
++    let identical = basePoints.length === candidatePoints.length
++    if (identical) {
++      for (let p = 0; p < basePoints.length; p += 1) {
++        const basePoint = basePoints[p]!
++        const candidatePoint = candidatePoints[p]!
++        if (
++          basePoint.x !== candidatePoint.x ||
++          basePoint.y !== candidatePoint.y ||
++          basePoint.z !== candidatePoint.z
++        ) {
++          identical = false
++          break
++        }
++      }
++    }
++    if (!identical) dirtyRouteIndexes.push(index)
++  }
++  return dirtyRouteIndexes
++}
++
++export type EvaluateDrcCandidateParams = {
++  srj: SimpleRouteJson
++  candidateRoutes: HighDensityRoute[]
++  drcEvaluator?: DrcEvaluator
++  connMap?: ConnectivityMap
++  base: DrcCandidateBase
++  /**
++   * The scalars the call site will compare the candidate against (may be a
++   * pending best-candidate rather than the base). Verify mode asserts the
++   * delta-vs-full decision against these cannot differ.
++   */
++  comparison: DrcCandidateDeltaAggregates
++  /** Call-site tag for stats and verify-mismatch context. */
++  tag: string
++}
++
++class IncrementalDrcVerifyError extends Error {}
++
++const verifyDeltaAggregates = (
++  deltaAggregates: DrcCandidateDeltaAggregates,
++  fullEvaluation: DrcCandidateEvaluation,
++  params: EvaluateDrcCandidateParams,
++  dirtyRouteIndexes: number[],
++): void => {
++  const scoreDiff = deltaAggregates.issueScore - fullEvaluation.issueScore
++  const countMismatch = deltaAggregates.count !== fullEvaluation.count
++  const viaMismatch =
++    deltaAggregates.viaIssueCount !== fullEvaluation.viaIssueCount
++  let hardMismatch =
++    countMismatch ||
++    viaMismatch ||
++    Math.abs(scoreDiff) > INCREMENTAL_DRC_SCORE_NOISE_TOLERANCE
++  let scoreNoise = false
++  if (!hardMismatch && scoreDiff !== 0) {
++    scoreNoise = true
++    const { comparison } = params
++    const deltaDecision = isBetterDrcAggregates(
++      deltaAggregates.count,
++      deltaAggregates.issueScore,
++      deltaAggregates.viaIssueCount,
++      comparison.count,
++      comparison.issueScore,
++      comparison.viaIssueCount,
++    )
++    const fullDecision = isBetterDrcAggregates(
++      fullEvaluation.count,
++      fullEvaluation.issueScore,
++      fullEvaluation.viaIssueCount,
++      comparison.count,
++      comparison.issueScore,
++      comparison.viaIssueCount,
++    )
++    if (deltaDecision !== fullDecision) hardMismatch = true
++  }
++  if (hardMismatch) {
++    const context = {
++      tag: params.tag,
++      dirtyRouteIndexes,
++      delta: deltaAggregates,
++      full: {
++        count: fullEvaluation.count,
++        issueScore: fullEvaluation.issueScore,
++        viaIssueCount: fullEvaluation.viaIssueCount,
++      },
++      base: {
++        count: params.base.snapshot.count,
++        issueScore: params.base.snapshot.issueScore,
++        viaIssueCount: params.base.viaIssueCount,
++      },
++      comparison: params.comparison,
++      routeCount: params.candidateRoutes.length,
++    }
++    const message = `TS_INCREMENTAL_DRC_VERIFY mismatch: ${JSON.stringify(context)}`
++    console.error(message)
++    throw new IncrementalDrcVerifyError(message)
++  }
++  noteDrcEval(scoreNoise ? "incremental.verifyScoreNoise" : "incremental.verifyOk")
++}
++
++export const evaluateDrcCandidate = (
++  params: EvaluateDrcCandidateParams,
++): DrcCandidateEvaluation => {
++  const { srj, candidateRoutes, drcEvaluator, connMap, base } = params
++  const evaluateFull = (): DrcCandidateEvaluation => {
++    const snapshot = getDrcSnapshot(srj, candidateRoutes, drcEvaluator, connMap)
++    return {
++      snapshot,
++      count: snapshot.count,
++      issueScore: snapshot.issueScore,
++      viaIssueCount: getViaDrcIssueCount(snapshot),
++    }
++  }
++  const evaluateCandidateDelta = INCREMENTAL_DRC_ENABLED
++    ? drcEvaluator?.evaluateCandidateDelta
++    : undefined
++  if (!evaluateCandidateDelta) return evaluateFull()
++
++  const dirtyRouteIndexes = getDirtyRouteIndexes(base.routes, candidateRoutes)
++  let deltaAggregates: DrcCandidateDeltaAggregates | undefined
++  if (dirtyRouteIndexes !== undefined) {
++    if (dirtyRouteIndexes.length === 0) {
++      // Geometrically identical to the base: a full eval would reproduce the
++      // base snapshot exactly (the evaluation is a deterministic function of
++      // route geometry and route-invariant inputs).
++      deltaAggregates = {
++        count: base.snapshot.count,
++        issueScore: base.snapshot.issueScore,
++        viaIssueCount: base.viaIssueCount,
++      }
++    } else {
++      deltaAggregates = evaluateCandidateDelta({
++        srj,
++        routes: candidateRoutes,
++        baseRoutes: base.routes,
++        baseErrors: base.snapshot.errors,
++        baseCount: base.snapshot.count,
++        baseIssueScore: base.snapshot.issueScore,
++        baseViaIssueCount: base.viaIssueCount,
++        dirtyRouteIndexes,
++      })
++    }
++  }
++  if (!deltaAggregates) {
++    noteDrcEval("incremental.screenFallback")
++    return evaluateFull()
++  }
++  if (INCREMENTAL_DRC_VERIFY) {
++    noteDrcEval("incremental.screen")
++    const fullEvaluation = evaluateFull()
++    verifyDeltaAggregates(
++      deltaAggregates,
++      fullEvaluation,
++      params,
++      dirtyRouteIndexes!,
++    )
++    // Verify mode decides from the full snapshot — identical to flag-off.
++    return fullEvaluation
++  }
++  if (DRC_EVAL_STATS_ENABLED) noteDrcEval("incremental.screen")
++  return deltaAggregates
++}
++
++/**
++ * Materializes the full snapshot for a candidate that passed the screen.
++ * When the evaluation already carries a snapshot (flag off / fallback /
++ * verify) this is free and returns the exact same values.
++ */
++export const resolveCandidateSnapshot = (
++  params: Pick<
++    EvaluateDrcCandidateParams,
++    "srj" | "candidateRoutes" | "drcEvaluator" | "connMap"
++  >,
++  evaluation: DrcCandidateEvaluation,
++): { snapshot: DrcSnapshot; viaIssueCount: number } => {
++  if (evaluation.snapshot) {
++    return {
++      snapshot: evaluation.snapshot,
++      viaIssueCount: evaluation.viaIssueCount,
++    }
++  }
++  if (DRC_EVAL_STATS_ENABLED) noteDrcEval("incremental.acceptFullEval")
++  const snapshot = getDrcSnapshot(
++    params.srj,
++    params.candidateRoutes,
++    params.drcEvaluator,
++    params.connMap,
++  )
++  return { snapshot, viaIssueCount: getViaDrcIssueCount(snapshot) }
++}
 diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolver/types.ts b/lib/solvers/GlobalDrcForceImproveSolver/types.ts
 --- a/lib/solvers/GlobalDrcForceImproveSolver/types.ts	2026-07-27 18:47:02.740569499 +0000
-+++ b/lib/solvers/GlobalDrcForceImproveSolver/types.ts	2026-07-27 19:31:57.993827838 +0000
-@@ -30,6 +30,15 @@
++++ b/lib/solvers/GlobalDrcForceImproveSolver/types.ts	2026-07-27 20:17:08.879235972 +0000
+@@ -4,13 +4,53 @@
+ 
+ export type DrcError = Record<string, unknown>
+ 
+-export type DrcEvaluator = (input: {
++/**
++ * Input for the optional incremental candidate screen (TS_INCREMENTAL_DRC=1,
++ * design doc §3 D1). `routes` is the candidate; `baseRoutes`/`baseErrors`/
++ * `base*` describe the snapshot the candidate will be compared against
++ * (always a full-eval snapshot). `dirtyRouteIndexes` lists every index whose
++ * route geometry differs between baseRoutes and routes (computed by
++ * geometric diff, so it is complete by construction).
++ */
++export type DrcCandidateDeltaInput = {
++  srj?: SimpleRouteJson
++  routes: HighDensityRoute[]
++  baseRoutes: HighDensityRoute[]
++  baseErrors: DrcError[]
++  baseCount: number
++  baseIssueScore: number
++  baseViaIssueCount: number
++  dirtyRouteIndexes: number[]
++}
++
++/** Absolute aggregates predicted for a candidate by the delta screen. */
++export type DrcCandidateDeltaAggregates = {
++  count: number
++  issueScore: number
++  viaIssueCount: number
++}
++
++export type DrcEvaluatorFn = (input: {
+   traces: SimplifiedPcbTraces
+   srj?: SimpleRouteJson
+   hdRoutes?: HighDensityRoute[]
+   routes?: HighDensityRoute[]
+ }) => { errors: DrcError[]; errorsWithCenters?: DrcError[] } | DrcError[]
+ 
++export type DrcEvaluator = DrcEvaluatorFn & {
++  /**
++   * Optional incremental screen: returns the candidate's absolute
++   * (count, issueScore, viaIssueCount) computed by evaluating only the
++   * dirty routes' neighborhoods and differencing against the base
++   * snapshot's dirty-involved errors, or undefined to decline (the caller
++   * then falls back to a full snapshot). Only consulted when
++   * TS_INCREMENTAL_DRC=1.
++   */
++  evaluateCandidateDelta?: (
++    input: DrcCandidateDeltaInput,
++  ) => DrcCandidateDeltaAggregates | undefined
++}
++
+ export type DrcSnapshot = {
+   errors: DrcError[]
+   count: number
+@@ -30,6 +70,15 @@
    enableTargetedErrorSweep?: boolean
    enablePostSolveClearanceRelaxation?: boolean
    enableViaInPadLayerMoves?: boolean

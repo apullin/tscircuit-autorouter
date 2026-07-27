@@ -150,6 +150,27 @@ rm+cp also works. Never edit in place.
   srj identity, revalidated against connMap/connections/obstacles
   identities; cached result treated as immutable by all callers. Verified:
   s5 1053687 / s8 1973601 EXACT, DRC 0/41, output traces byte-identical.
+  2026-07-27 (perf/drc-d1 scaffolding, flag-gated TS_INCREMENTAL_DRC=1):
+  incremental-DRC candidate-screen seam. New incrementalDrc.ts (env flags);
+  types.ts: DrcEvaluator becomes function-with-optional-property type
+  gaining evaluateCandidateDelta(DrcCandidateDeltaInput) →
+  DrcCandidateDeltaAggregates | undefined; solverHelpers.ts: exports
+  getDrcErrorSeverity / isViaDrcError / isBetterDrcAggregates (extracted
+  from isBetterDrcSnapshot, identical arithmetic), adds
+  getDirtyRouteIndexes (complete-by-construction geometric diff of route
+  point x/y/z sequences), evaluateDrcCandidate (screen entry: flag off or
+  no delta-capable evaluator → full getDrcSnapshot exactly as before;
+  flag on → delta aggregates without snapshot; VERIFY mode computes both,
+  asserts equality/decision agreement and throws on mismatch, then decides
+  from the full snapshot) and resolveCandidateSnapshot (one full eval when
+  a screened candidate wins — full snapshot stays the acceptance authority
+  and comparison base, preserving error ordering for targeting cursors);
+  GlobalDrcForceImproveSolver.ts: all six targeted-candidate sites (detour /
+  terminal-via / via-in-pad / layer-move / sweep / force) route through the
+  seam; broad-fallback and boundary snapshots keep full eval. Flag unset:
+  same evals in the same order, byte-identical decisions. Verified: flag
+  off s5 1053687/0 and s8 1973601/41 EXACT; flag on (no delta evaluator
+  attached yet ⇒ fallback path) s5 1053687/0; repo tsc clean.
   2026-07-27 (perf/drc-p0 P0-adjacent, result-identical): createSimplifiedTraces
   builds a routes-by-connection Map in one pass instead of the per-connection
   O(connections × routes) map+filter; trace output order preserved exactly
