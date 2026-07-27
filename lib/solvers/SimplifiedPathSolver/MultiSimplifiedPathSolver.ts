@@ -7,6 +7,8 @@ import { createObjectsWithZLayers } from "lib/utils/createObjectsWithZLayers"
 import { BaseSolver } from "../BaseSolver"
 import { SingleSimplifiedPathSolver } from "./SingleSimplifiedPathSolver"
 import { SingleSimplifiedPathSolver5 } from "./SingleSimplifiedPathSolver5_Deg45"
+import { SharedRouteSegmentIndex } from "lib/data-structures/SharedRouteSegmentIndex"
+import { SharedObstacleIndex } from "lib/data-structures/SharedObstacleIndex"
 
 export class MultiSimplifiedPathSolver extends BaseSolver {
   override getSolverName(): string {
@@ -25,6 +27,22 @@ export class MultiSimplifiedPathSolver extends BaseSolver {
   colorMap: Record<string, string>
   outline?: Array<{ x: number; y: number }>
   defaultViaDiameter: number
+
+  /**
+   * Shared flatbush index over every segment of every unsimplified route,
+   * built once here and queried by each SingleSimplifiedPathSolver5's
+   * constructor (replacing its O(routes * segments) per-route scan). Valid
+   * for the whole run because unsimplifiedHdRoutes is never mutated in
+   * place — simplified geometry goes to simplifiedHdRoutes instead.
+   */
+  sharedRouteSegmentIndex: SharedRouteSegmentIndex
+
+  /**
+   * Shared flatbush index over the (z-layered) obstacles, built once here
+   * and queried by each SingleSimplifiedPathSolver5's constructor instead of
+   * scanning every obstacle per route.
+   */
+  sharedObstacleIndex: SharedObstacleIndex
 
   constructor(params: {
     unsimplifiedHdRoutes: HighDensityIntraNodeRoute[]
@@ -55,6 +73,10 @@ export class MultiSimplifiedPathSolver extends BaseSolver {
     this.defaultViaDiameter = params.defaultViaDiameter ?? 0.3
 
     this.simplifiedHdRoutes = []
+    this.sharedRouteSegmentIndex = new SharedRouteSegmentIndex(
+      this.unsimplifiedHdRoutes,
+    )
+    this.sharedObstacleIndex = new SharedObstacleIndex(this.obstacles)
   }
 
   _step() {
@@ -71,6 +93,10 @@ export class MultiSimplifiedPathSolver extends BaseSolver {
         otherHdRoutes: this.unsimplifiedHdRoutes
           .slice(this.currentUnsimplifiedHdRouteIndex + 1)
           .concat(this.simplifiedHdRoutes),
+        sharedRouteSegmentIndex: this.sharedRouteSegmentIndex,
+        sharedIndexOwnRouteIndex: this.currentUnsimplifiedHdRouteIndex,
+        otherSimplifiedHdRoutes: this.simplifiedHdRoutes,
+        sharedObstacleIndex: this.sharedObstacleIndex,
         obstacles: this.obstacles,
         connMap: this.connMap,
         colorMap: this.colorMap,
