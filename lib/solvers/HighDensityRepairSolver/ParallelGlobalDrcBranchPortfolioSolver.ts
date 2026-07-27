@@ -3,7 +3,8 @@ import { GlobalDrcBranchPortfolioSolver } from "high-density-repair03/lib/solver
 import { getDrcSnapshot } from "high-density-repair03/lib/solvers/GlobalDrcForceImproveSolver/drc-snapshot"
 import { BROAD_FALLBACK_SMALL_ROUTE_LIMIT } from "high-density-repair03/lib/solvers/GlobalDrcForceImproveSolver/solverConfig"
 import type { HighDensityRoute } from "high-density-repair03/lib/types/high-density-types"
-import { parallelA2Enabled, runA2Branches } from "../../parallel/a2Pool"
+import { resolveA2Parallelism } from "../../parallel/autoEnable"
+import { runA2Branches } from "../../parallel/a2Pool"
 
 /**
  * Parallel (A2) variant of GlobalDrcBranchPortfolioSolver: runs the baseline
@@ -20,6 +21,7 @@ import { parallelA2Enabled, runA2Branches } from "../../parallel/a2Pool"
 export class ParallelGlobalDrcBranchPortfolioSolver extends GlobalDrcBranchPortfolioSolver {
   private a2EvaluatorConfig?: Record<string, unknown>
   private a2Done = false
+  private a2Decision: boolean | null = null
 
   constructor(
     params: ConstructorParameters<typeof GlobalDrcBranchPortfolioSolver>[0] & {
@@ -110,8 +112,24 @@ export class ParallelGlobalDrcBranchPortfolioSolver extends GlobalDrcBranchPortf
     )
   }
 
+  /**
+   * Flag plumbing (G9 auto-enable): explicit TS_PARALLEL_A2 always wins (and
+   * keeps the missing-config throw in _step, surfacing setup errors as
+   * before); AUTO mode additionally requires a2EvaluatorConfig — a solver
+   * constructed without it was sequential before auto-enable existed, so
+   * auto mode must not turn that previously-working configuration into a
+   * throw. Cached per instance: env must not be re-probed every pump.
+   */
+  private isA2Enabled(): boolean {
+    if (this.a2Decision !== null) return this.a2Decision
+    const decision = resolveA2Parallelism()
+    this.a2Decision =
+      decision.enabled && (decision.explicit || !!this.a2EvaluatorConfig)
+    return this.a2Decision
+  }
+
   override _step() {
-    if (!parallelA2Enabled() || this.a2Done) {
+    if (!this.isA2Enabled() || this.a2Done) {
       super._step()
       return
     }
