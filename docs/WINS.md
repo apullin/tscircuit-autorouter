@@ -24,6 +24,12 @@ perf-audit-2026-07-23.md. Baselines: main @ v0.0.714 (b7b243cc), 64-thread x86, 
   a via-in-pad-heavy verify run (those candidate classes had zero volume on
   s8/s12). Headroom noted: conversion-path pruning, indexed pruning to lift
   MAX_DIRTY_ROUTES, acceptance re-eval reuse.
+  **CORPUS GATE PASSED (same night, d7690d60 data): srj18 ×16 off-vs-on
+  interleaved — 16/16 boards bit-exact (iterations + DRC), wall 1389s → 1328s
+  = 1.046x, no board slower. Tier-1 identity now covers all 5 boards (s10
+  2.2x stage, s6 100-error full verify run clean). Checks phase-2 dist ADOPTED
+  in the same commit (anchors exact post-swap). Default-on blocked only on a
+  via-in-pad-class verify probe (hunt running on dataset01 via TS_DRC_EVAL_STATS).**
 
 - **2026-07-27 (late) — NODE worker_threads PARALLELISM landed (merge 8904d3ac, G7b):
   Node users now get the parallel stack.** Thin runtime shim (lib/parallel/runtime.ts,
