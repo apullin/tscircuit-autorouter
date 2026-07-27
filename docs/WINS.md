@@ -5,6 +5,20 @@ perf-audit-2026-07-23.md. Baselines: main @ v0.0.714 (b7b243cc), 64-thread x86, 
 
 ## Confirmed
 
+- **2026-07-27 (night) — AGGREGATE vs TOP-OF-TREE MEASURED: ~4x (lower bound).**
+  Baseline = upstream v0.0.718 (origin/main tip = the stack's exact base,
+  pristine temp worktree) vs perf-ts-stack productized default (auto HD
+  workers + A2), srj18 x16, serial interleaved-ish (baseline legs + same-day
+  stack legs with 3 drift controls within noise), 480s cap. **Total wall
+  3724.7s -> 932.6s = 3.99x aggregate** (main timed out on s6/s14/s15,
+  counted AT the 480s cap = LOWER bound). Per-board: min 2.25x (s5),
+  P50 4.19x, max 6.62x (s8: 324.4 -> 49.0). Completions: main 13/16,
+  stack 16/16. DRC exact on 11 boards; the 2 deltas favor the stack
+  (s7 7->5, s8 45->41); timeouts have no main DRC. This supersedes the
+  other session's undocumented "~3.5x" claim — the measured figure is ~4x
+  and the per-link chain (2.46x sequential s8 x 1.55x parallel) reconciles
+  it. Raw: /tmp/agg-main-vs-stack.jsonl + /tmp/gauntlet-auto-ab.jsonl.
+
 - **2026-07-27 (eve) — G10 capacity-model investigation: TWO levers found, shipped
   as the `qualityMode` opt-in (7eb94e46), NOT a default.** Full story:
   perf-artifacts/g10-capacity-prevention-design.md. (a) Pipeline-7 mesh comes
