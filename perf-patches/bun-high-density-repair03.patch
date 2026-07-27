@@ -1,6 +1,6 @@
 diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats.ts b/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats.ts
 --- a/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats.ts	1970-01-01 00:00:00.000000000 +0000
-+++ b/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats.ts	2026-07-27 19:03:45.492263462 +0000
++++ b/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats.ts	2026-07-27 19:11:01.345656725 +0000
 @@ -0,0 +1,52 @@
 +/**
 + * Env-gated DRC evaluation instrumentation (TS_DRC_EVAL_STATS=1).
@@ -56,7 +56,7 @@ diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats.ts b/lib/solver
 +})
 diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolver.ts b/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolver.ts
 --- a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolver.ts	2026-07-27 19:03:45.488979316 +0000
-+++ b/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolver.ts	2026-07-27 19:03:45.492362178 +0000
++++ b/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolver.ts	2026-07-27 19:11:01.345760450 +0000
 @@ -3,6 +3,7 @@
  import type { HighDensityRoute } from "../../types/high-density-types"
  import { GlobalDrcForceImproveSolver } from "./GlobalDrcForceImproveSolver"
@@ -65,15 +65,63 @@ diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolv
  import { applyBroadRepulsionForces } from "./solverHelpers"
  import { BROAD_FALLBACK_SMALL_ROUTE_LIMIT } from "./solverConfig"
  import type { DrcSnapshot, GlobalDrcBranchPortfolioSolverParams } from "./types"
-@@ -133,6 +134,7 @@
+@@ -115,11 +116,19 @@
+       ...this.params,
+       hdRoutes: this.inputHdRoutes,
+       enableViaInPadLayerMoves: false,
++      // Same routes + evaluator the portfolio just evaluated in "start".
++      initialSnapshot: this.inputSnapshot,
+     })
+     this.activeSubSolver = this.baselineSolver
+     this.phase = "baseline"
+   }
+ 
++  /**
++   * Every caller passes `snapshot` = the drcEvaluator snapshot of exactly
++   * `routes` (input / baseline-final / broad-final), so when the via-in-pad
++   * evaluator IS the drc evaluator (the pipeline passes one shared closure)
++   * the gate snapshot below would recompute the identical value — reuse it.
++   */
+   private startViaInPadPhase(
+     routes: HighDensityRoute[],
+     snapshot: DrcSnapshot,
+@@ -133,12 +142,18 @@
        this.finishWithOutput(routes, snapshot, portfolioSelectedSolver)
        return
      }
-+    if (DRC_EVAL_STATS_ENABLED) noteDrcEval("boundary.viaInPadGate")
-     const viaInPadInputSnapshot = getDrcSnapshot(
-       this.params.srj,
-       routes,
-@@ -170,6 +172,7 @@
+-    const viaInPadInputSnapshot = getDrcSnapshot(
+-      this.params.srj,
+-      routes,
+-      this.params.viaInPadDrcEvaluator,
+-      this.params.connMap,
+-    )
++    let viaInPadInputSnapshot: DrcSnapshot
++    if (this.params.viaInPadDrcEvaluator === this.params.drcEvaluator) {
++      viaInPadInputSnapshot = snapshot
++    } else {
++      if (DRC_EVAL_STATS_ENABLED) noteDrcEval("boundary.viaInPadGate")
++      viaInPadInputSnapshot = getDrcSnapshot(
++        this.params.srj,
++        routes,
++        this.params.viaInPadDrcEvaluator,
++        this.params.connMap,
++      )
++    }
+     if (
+       this.inputHdRoutes.length > BROAD_FALLBACK_SMALL_ROUTE_LIMIT &&
+       viaInPadInputSnapshot.count > MAX_LARGE_BOARD_VIA_IN_PAD_DRC_ISSUES
+@@ -157,6 +172,10 @@
+       enableTargetedErrorSweep: false,
+       enablePostSolveClearanceRelaxation: false,
+       enableViaInPadLayerMoves: true,
++      // viaInPadInputSnapshot is the viaInPadDrcEvaluator snapshot of
++      // `routes` (directly computed, or `snapshot` when the evaluators are
++      // the same closure).
++      initialSnapshot: viaInPadInputSnapshot,
+     })
+     this.activeSubSolver = this.viaInPadSolver
+     this.phase = "viaInPad"
+@@ -170,6 +189,7 @@
        this.broadPassMultiplier,
        this.params.connMap,
      )
@@ -81,41 +129,118 @@ diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolv
      this.broadInputSnapshot = getDrcSnapshot(
        this.params.srj,
        broadInputRoutes,
-@@ -196,6 +199,7 @@
+@@ -189,6 +209,8 @@
+       hdRoutes: broadInputRoutes,
+       maxIterations: this.broadMaxIterations,
+       enableViaInPadLayerMoves: false,
++      // Same broad routes + evaluator evaluated just above.
++      initialSnapshot: this.broadInputSnapshot,
+     })
+     this.activeSubSolver = this.broadSolver
+     this.phase = "broad"
+@@ -196,12 +218,17 @@
  
    override _step() {
      if (this.phase === "start") {
-+      if (DRC_EVAL_STATS_ENABLED) noteDrcEval("boundary.input")
-       this.inputSnapshot = getDrcSnapshot(
-         this.params.srj,
-         this.inputHdRoutes,
-@@ -214,6 +218,7 @@
+-      this.inputSnapshot = getDrcSnapshot(
+-        this.params.srj,
+-        this.inputHdRoutes,
+-        this.params.drcEvaluator,
+-        this.params.connMap,
+-      )
++      if (this.params.initialSnapshot) {
++        this.inputSnapshot = this.params.initialSnapshot
++      } else {
++        if (DRC_EVAL_STATS_ENABLED) noteDrcEval("boundary.input")
++        this.inputSnapshot = getDrcSnapshot(
++          this.params.srj,
++          this.inputHdRoutes,
++          this.params.drcEvaluator,
++          this.params.connMap,
++        )
++      }
+       if (this.inputSnapshot.count === 0) {
+         this.startViaInPadPhase(this.inputHdRoutes, this.inputSnapshot)
+         return
+@@ -214,12 +241,20 @@
        this.stepBranch(this.baselineSolver!, "baseline")
        if (!this.baselineSolver!.solved) return
        const baselineRoutes = this.baselineSolver!.getOutput()
-+      if (DRC_EVAL_STATS_ENABLED) noteDrcEval("boundary.baselineFinal")
-       this.baselineSnapshot = getDrcSnapshot(
-         this.params.srj,
-         baselineRoutes,
-@@ -236,6 +241,7 @@
+-      this.baselineSnapshot = getDrcSnapshot(
+-        this.params.srj,
+-        baselineRoutes,
+-        this.params.drcEvaluator,
+-        this.params.connMap,
+-      )
++      // The solved branch's outputSnapshot IS the drcEvaluator snapshot of
++      // baselineRoutes (see getOutputSnapshot doc); the fallback recompute
++      // is defensive dead code.
++      let baselineSnapshot = this.baselineSolver!.getOutputSnapshot()
++      if (!baselineSnapshot) {
++        if (DRC_EVAL_STATS_ENABLED) noteDrcEval("boundary.baselineFinal")
++        baselineSnapshot = getDrcSnapshot(
++          this.params.srj,
++          baselineRoutes,
++          this.params.drcEvaluator,
++          this.params.connMap,
++        )
++      }
++      this.baselineSnapshot = baselineSnapshot
+       if (this.baselineSnapshot.count === 0) {
+         this.startViaInPadPhase(
+           baselineRoutes,
+@@ -236,12 +271,17 @@
        this.stepBranch(this.broadSolver!, "broad")
        if (!this.broadSolver!.solved) return
        const broadRoutes = this.broadSolver!.getOutput()
-+      if (DRC_EVAL_STATS_ENABLED) noteDrcEval("boundary.broadFinal")
-       this.broadSnapshot = getDrcSnapshot(
-         this.params.srj,
-         broadRoutes,
-@@ -262,6 +268,7 @@
+-      this.broadSnapshot = getDrcSnapshot(
+-        this.params.srj,
+-        broadRoutes,
+-        this.params.drcEvaluator,
+-        this.params.connMap,
+-      )
++      let broadSnapshot = this.broadSolver!.getOutputSnapshot()
++      if (!broadSnapshot) {
++        if (DRC_EVAL_STATS_ENABLED) noteDrcEval("boundary.broadFinal")
++        broadSnapshot = getDrcSnapshot(
++          this.params.srj,
++          broadRoutes,
++          this.params.drcEvaluator,
++          this.params.connMap,
++        )
++      }
++      this.broadSnapshot = broadSnapshot
+       if (this.broadSnapshot.count < this.baselineSnapshot!.count) {
+         this.startViaInPadPhase(
+           broadRoutes,
+@@ -262,12 +302,18 @@
        this.stepBranch(this.viaInPadSolver!, "via-in-pad")
        if (!this.viaInPadSolver!.solved) return
        const viaInPadRoutes = this.viaInPadSolver!.getOutput()
-+      if (DRC_EVAL_STATS_ENABLED) noteDrcEval("boundary.viaInPadFinal")
-       const viaInPadSnapshot = getDrcSnapshot(
-         this.params.srj,
+-      const viaInPadSnapshot = getDrcSnapshot(
+-        this.params.srj,
+-        viaInPadRoutes,
+-        this.params.viaInPadDrcEvaluator,
+-        this.params.connMap,
+-      )
++      // The via-in-pad solver's drcEvaluator IS params.viaInPadDrcEvaluator,
++      // so its outputSnapshot matches what this recompute would produce.
++      let viaInPadSnapshot = this.viaInPadSolver!.getOutputSnapshot()
++      if (!viaInPadSnapshot) {
++        if (DRC_EVAL_STATS_ENABLED) noteDrcEval("boundary.viaInPadFinal")
++        viaInPadSnapshot = getDrcSnapshot(
++          this.params.srj,
++          viaInPadRoutes,
++          this.params.viaInPadDrcEvaluator,
++          this.params.connMap,
++        )
++      }
+       this.finishWithOutput(
          viaInPadRoutes,
+         viaInPadSnapshot,
 diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts b/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts
 --- a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts	2026-07-27 19:03:45.489055860 +0000
-+++ b/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts	2026-07-27 19:03:45.492304429 +0000
++++ b/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts	2026-07-27 19:11:01.345699645 +0000
 @@ -1,6 +1,7 @@
  import { BaseSolver } from "../BaseSolver"
  import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
@@ -124,7 +249,18 @@ diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.
  import {
    BROAD_FALLBACK_SMALL_ROUTE_LIMIT,
    EXTENDED_BROAD_FORCE_PASS_MULTIPLIER,
-@@ -128,6 +129,16 @@
+@@ -105,6 +106,10 @@
+       params.enablePostSolveClearanceRelaxation ?? true
+     this.enableViaInPadLayerMoves = params.enableViaInPadLayerMoves ?? false
+     this.outputHdRoutes = params.hdRoutes
++    // Precomputed snapshot of (hdRoutes, drcEvaluator, connMap): the first
++    // _step's `this.outputSnapshot ?? getDrcSnapshot(...)` then reuses it
++    // instead of recomputing the identical value.
++    this.outputSnapshot = params.initialSnapshot
+     this.MAX_ITERATIONS =
+       this.configuredMaxIterations ?? getBaseMaxIterations(this.effort)
+   }
+@@ -128,6 +133,16 @@
      ] as const
    }
  
@@ -141,7 +277,7 @@ diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.
    private updateStats(snapshot: DrcSnapshot) {
      this.stats = {
        initialDrcIssueCount: this.initialDrcIssueCount ?? snapshot.count,
-@@ -178,6 +189,9 @@
+@@ -178,6 +193,9 @@
            this.connMap,
          )
        : routes
@@ -151,7 +287,7 @@ diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.
      const relaxedSnapshot =
        relaxedRoutes === routes
          ? snapshot
-@@ -257,6 +271,9 @@
+@@ -257,6 +275,9 @@
  
    override _step() {
      let bestRoutes = this.outputHdRoutes
@@ -161,7 +297,7 @@ diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.
      let bestSnapshot =
        this.outputSnapshot ??
        getDrcSnapshot(this.srj, bestRoutes, this.drcEvaluator, this.connMap)
-@@ -378,6 +395,7 @@
+@@ -378,6 +399,7 @@
            this.viaInPadCandidateAttempts += 1
            candidateAttemptsThisStep += 1
            this.candidateAttempts += 1
@@ -169,7 +305,7 @@ diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.
            const candidateSnapshot = getDrcSnapshot(
              this.srj,
              materializedCandidateRoutes,
-@@ -415,6 +433,7 @@
+@@ -415,6 +437,7 @@
          this.viaInPadCandidateAttempts += 1
          candidateAttemptsThisStep += 1
          this.candidateAttempts += 1
@@ -177,7 +313,7 @@ diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.
          const candidateSnapshot = getDrcSnapshot(
            this.srj,
            materializedCandidateRoutes,
-@@ -463,6 +482,7 @@
+@@ -463,6 +486,7 @@
          this.viaInPadCandidateAttempts += 1
          candidateAttemptsThisStep += 1
          this.candidateAttempts += 1
@@ -185,7 +321,7 @@ diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.
          const candidateSnapshot = getDrcSnapshot(
            this.srj,
            materializedCandidateRoutes,
-@@ -519,6 +539,7 @@
+@@ -519,6 +543,7 @@
              this.viaInPadCandidateAttempts += 1
              candidateAttemptsThisStep += 1
              this.candidateAttempts += 1
@@ -193,7 +329,7 @@ diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.
              const candidateSnapshot = getDrcSnapshot(
                this.srj,
                materializedCandidateRoutes,
-@@ -584,6 +605,7 @@
+@@ -584,6 +609,7 @@
          const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
          candidateAttemptsThisStep += 1
          this.candidateAttempts += 1
@@ -201,7 +337,7 @@ diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.
          const candidateSnapshot = getDrcSnapshot(
            this.srj,
            materializedCandidateRoutes,
-@@ -646,6 +668,7 @@
+@@ -646,6 +672,7 @@
          const materializedCandidateRoutes = materializeRoutes(candidateRoutes)
          candidateAttemptsThisStep += 1
          this.candidateAttempts += 1
@@ -209,7 +345,7 @@ diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.
          const candidateSnapshot = getDrcSnapshot(
            this.srj,
            materializedCandidateRoutes,
-@@ -710,6 +733,7 @@
+@@ -710,6 +737,7 @@
            this.drcEvaluator === undefined,
          )
          if (broadCandidateRoutes === bestRoutes) continue
@@ -217,7 +353,7 @@ diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.
          const broadCandidateSnapshot = getDrcSnapshot(
            this.srj,
            broadCandidateRoutes,
-@@ -762,6 +786,9 @@
+@@ -762,6 +790,9 @@
    }
  
    override tryFinalAcceptance() {
@@ -227,9 +363,29 @@ diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.
      const snapshot =
        this.outputSnapshot ??
        getDrcSnapshot(
+@@ -777,6 +808,19 @@
+     return this.outputHdRoutes
+   }
+ 
++  /**
++   * The DRC snapshot corresponding to getOutput(): set alongside
++   * outputHdRoutes at the end of every completed _step and by
++   * acceptSolvedRoutes (which every path to `solved` goes through, including
++   * tryFinalAcceptance), so once the solver is solved it is exactly the
++   * snapshot a fresh getDrcSnapshot over getOutput() would produce. Exposed
++   * so the branch portfolio reuses branch-final snapshots instead of
++   * recomputing them.
++   */
++  getOutputSnapshot(): DrcSnapshot | undefined {
++    return this.outputSnapshot
++  }
++
+   override visualize(): GraphicsObject {
+     return registeredVisualizer?.(this) ?? super.visualize()
+   }
 diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts b/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts
 --- a/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts	2026-07-27 19:03:45.489261337 +0000
-+++ b/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts	2026-07-27 19:03:45.492110634 +0000
++++ b/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts	2026-07-27 19:11:01.345487977 +0000
 @@ -50,20 +50,43 @@
  ) => {
    if (!right) return false
@@ -283,7 +439,7 @@ diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts b/lib/solvers/Gl
    obstacle: SimpleRouteJson["obstacles"][number],
 diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts b/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts
 --- a/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts	2026-07-27 19:03:45.489371955 +0000
-+++ b/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts	2026-07-27 19:03:45.492180395 +0000
++++ b/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts	2026-07-27 19:11:01.345567296 +0000
 @@ -3,10 +3,16 @@
    segmentToSegmentMinDistance,
  } from "@tscircuit/math-utils"
@@ -394,3 +550,22 @@ diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts b/lib/solve
          !obstacleAppliesToSegment(obstacle, segment)
        ) {
          continue
+diff -ruN a/lib/solvers/GlobalDrcForceImproveSolver/types.ts b/lib/solvers/GlobalDrcForceImproveSolver/types.ts
+--- a/lib/solvers/GlobalDrcForceImproveSolver/types.ts	2026-07-27 19:03:45.489531706 +0000
++++ b/lib/solvers/GlobalDrcForceImproveSolver/types.ts	2026-07-27 19:11:01.345457570 +0000
+@@ -30,6 +30,15 @@
+   enableTargetedErrorSweep?: boolean
+   enablePostSolveClearanceRelaxation?: boolean
+   enableViaInPadLayerMoves?: boolean
++  /**
++   * Optional precomputed DRC snapshot of exactly (hdRoutes, drcEvaluator,
++   * connMap). Callers that already evaluated the input routes (e.g. the
++   * branch portfolio's boundary snapshots) pass it so the solver's first
++   * _step reuses it instead of recomputing an identical snapshot. Snapshots
++   * are treated as immutable; passing one that does not match the input
++   * routes/evaluator changes solver behavior.
++   */
++  initialSnapshot?: DrcSnapshot
+ }
+ 
+ export type GlobalDrcBranchPortfolioSolverParams =

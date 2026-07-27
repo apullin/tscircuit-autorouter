@@ -88,8 +88,13 @@ self.onmessage = (e: MessageEvent) => {
       solver.solve()
       if (solver.failed) throw new Error(`baseline branch failed: ${solver.error}`)
       const routes = solver.getOutput()
-      if (DRC_EVAL_STATS_ENABLED) noteDrcEval("boundary.baselineFinal")
-      const snapshot = getDrcSnapshot(srj, routes, drcEvaluator, connMap)
+      // The solved solver's outputSnapshot matches a recompute over its
+      // output routes with the same evaluator (only .count is shipped).
+      let snapshot = solver.getOutputSnapshot()
+      if (!snapshot) {
+        if (DRC_EVAL_STATS_ENABLED) noteDrcEval("boundary.baselineFinal")
+        snapshot = getDrcSnapshot(srj, routes, drcEvaluator, connMap)
+      }
       writeResult(task.resultSab, 1, { routes, count: snapshot.count })
       return
     }
@@ -116,12 +121,17 @@ self.onmessage = (e: MessageEvent) => {
       connMap,
       drcEvaluator,
       enableViaInPadLayerMoves: false,
+      // Same broad routes + evaluator evaluated just above.
+      initialSnapshot: broadInputSnapshot,
     } as ConstructorParameters<typeof GlobalDrcForceImproveSolver>[0])
     broadSolver.solve()
     if (broadSolver.failed) throw new Error(`broad branch failed: ${broadSolver.error}`)
     const broadRoutes = broadSolver.getOutput()
-    if (DRC_EVAL_STATS_ENABLED) noteDrcEval("boundary.broadFinal")
-    const broadSnapshot = getDrcSnapshot(srj, broadRoutes, drcEvaluator, connMap)
+    let broadSnapshot = broadSolver.getOutputSnapshot()
+    if (!broadSnapshot) {
+      if (DRC_EVAL_STATS_ENABLED) noteDrcEval("boundary.broadFinal")
+      broadSnapshot = getDrcSnapshot(srj, broadRoutes, drcEvaluator, connMap)
+    }
     writeResult(task.resultSab, 1, {
       routes: broadRoutes,
       count: broadSnapshot.count,
