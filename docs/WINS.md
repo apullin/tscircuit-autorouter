@@ -31,8 +31,10 @@ perf-audit-2026-07-23.md. Baselines: main @ v0.0.714 (b7b243cc), 64-thread x86, 
   counts, failure stand-ins) and a worker-side success-only intra-node
   cache (failure-cache poisoning class closed worker-side). Gates: s5
   anchor 1053687 exact under TS_BENCHMARK=1; s8 sequential 1973601 exact
-  DRC 41; s8 AUTO-ENABLED DRC 41==41, wall 76.3s -> ~50s (load-contaminated,
-  direction-only). 13 new G9 tests + 10 eviction tests; suite green modulo
+  DRC 41; s8 AUTO-ENABLED DRC 41==41. CLEAN interleaved A/B (quiet box,
+  2 rounds each): **s8 75.7s -> 49.0s = 1.55x; s6 225.5s -> 103.8s =
+  2.17x — DRC exact on both (41==41, 100==100)**, by DEFAULT for
+  CLI/server users (benchmark/CI stays sequential by design). 13 new G9 tests + 10 eviction tests; suite green modulo
   the 2 known upstream-drift failures.
 
 - **2026-07-26 — CONSOLIDATION SESSION (second-opinion review + fixes; full detail in
