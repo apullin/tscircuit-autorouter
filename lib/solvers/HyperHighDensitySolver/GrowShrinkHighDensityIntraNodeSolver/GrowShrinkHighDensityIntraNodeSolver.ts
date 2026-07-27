@@ -16,7 +16,14 @@ type PortfolioSingleIntraNodeSolverParams = ConstructorParameters<
   typeof PortfolioSingleIntraNodeSolver
 >[0]
 
-export const DEFAULT_MAX_GROWTH_ATTEMPTS = 3
+/** TS_MAX_GROWTH_ATTEMPTS: optional override of the growth-attempt cap (default 3).
+ * Needed to make a 4th TS_GROWTH_SCHEDULE rung reachable. Unset = upstream. */
+export const DEFAULT_MAX_GROWTH_ATTEMPTS =
+  typeof process !== "undefined" &&
+  process.env.TS_MAX_GROWTH_ATTEMPTS &&
+  Number.isFinite(Number(process.env.TS_MAX_GROWTH_ATTEMPTS))
+    ? Number(process.env.TS_MAX_GROWTH_ATTEMPTS)
+    : 3
 
 /**
  * TS_GROWTH_SCHEDULE: optional comma-separated absolute scale factors tried in
