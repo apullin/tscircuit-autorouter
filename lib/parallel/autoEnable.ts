@@ -9,8 +9,10 @@
  *     NOT apply to explicit values (benchmarks and experiments ask for exact
  *     configurations).
  *  2. When unset, auto-enable only when ALL of:
- *     a. not a browser context (process global present, Worker and
- *        SharedArrayBuffer available),
+ *     a. not a browser context (process global present, a usable worker
+ *        runtime — Bun's Worker, or node worker_threads with loadable worker
+ *        entries (see runtime.nodeWorkerSupport) — and SharedArrayBuffer
+ *        available),
  *     b. not benchmark/CI/test mode — the perf harness (benchmark.sh pins
  *        TS_BENCHMARK=1), CI runners (CI) and `bun test` (NODE_ENV=test) must
  *        stay on the sequential default so identity anchors and the suite do
@@ -24,6 +26,8 @@
  *     boards stay sequential — worker boot + IPC cannot pay for a handful of
  *     nodes).
  */
+
+import { nodeWorkerRuntimeUsable } from "./runtime"
 
 /** Boards with fewer unsolved nodes than this stay sequential when auto-enabled. */
 export const MIN_PARALLEL_HD_NODE_COUNT = 8
@@ -91,7 +95,12 @@ export const detectParallelHardware = (): ParallelHardware => {
   return {
     cores,
     freeMemBytes,
-    hasWorker: typeof Worker !== "undefined",
+    // A global Worker means Bun (or a browser, which the SAB/process gates
+    // handle). Without one, node still counts when worker_threads is present
+    // AND the worker entries are actually loadable there (prebuilt bundles or
+    // a bun CLI to build them — see runtime.nodeWorkerSupport); auto mode
+    // must not enable a pool whose creation would throw.
+    hasWorker: typeof Worker !== "undefined" || nodeWorkerRuntimeUsable(),
     hasSharedArrayBuffer: typeof SharedArrayBuffer !== "undefined",
   }
 }
@@ -111,7 +120,10 @@ export const isBenchmarkCiOrTestEnv = (env: ParallelEnv): boolean =>
   env.NODE_ENV === "test"
 
 const autoWorkerCount = (cores: number): number =>
-  Math.min(MAX_AUTO_WORKERS, Math.max(0, Math.floor(cores / CORES_PER_AUTO_WORKER)))
+  Math.min(
+    MAX_AUTO_WORKERS,
+    Math.max(0, Math.floor(cores / CORES_PER_AUTO_WORKER)),
+  )
 
 /** Shared auto-mode gates (browser, benchmark/CI/test, memory). Null = allowed. */
 const autoDisabledReason = (

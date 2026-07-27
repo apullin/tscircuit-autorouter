@@ -197,3 +197,6 @@ result-*
 tmp
 
 *.received.svg
+
+# Lazily generated node worker-entry bundles (lib/parallel/runtime.ts)
+.parallel-worker-build/

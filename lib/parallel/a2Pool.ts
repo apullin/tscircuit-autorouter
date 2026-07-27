@@ -11,6 +11,11 @@
  * result (observed failure mode: board N's routes returned for board N+1).
  */
 import { resolveA2Parallelism } from "./autoEnable"
+import {
+  type ParallelWorkerHandle,
+  sleepSyncMs,
+  spawnParallelWorker,
+} from "./runtime"
 
 const RESULT_SAB_BYTES = 64 * 1024 * 1024
 const STATUS_OFFSET = 0
@@ -18,7 +23,7 @@ const LENGTH_OFFSET = 1
 const PAYLOAD_OFFSET = 16
 
 type A2Worker = {
-  worker: Worker
+  worker: ParallelWorkerHandle
   resultSab: SharedArrayBuffer
   header: Int32Array
   busy: boolean
@@ -42,30 +47,32 @@ const getA2Pool = (): A2Worker[] => {
   if (!a2Pool) {
     const pool: A2Worker[] = []
     for (let i = 0; i < 2; i++) {
-      const worker = new Worker(
-        new URL("./a2BranchWorker.ts", import.meta.url).href,
-      ) as Worker & { unref(): void }
-      worker.unref()
       const resultSab = new SharedArrayBuffer(RESULT_SAB_BYTES)
       const entry: A2Worker = {
-        worker,
+        // Assigned immediately below: spawnParallelWorker's lifecycle
+        // callbacks need to close over the entry object.
+        worker: null as unknown as ParallelWorkerHandle,
         resultSab,
         header: new Int32Array(resultSab, 0, 2),
         busy: false,
         fatal: null,
       }
-      // Fires when the worker script fails to load/evaluate (the worker-side
-      // try/catch only covers onmessage-time errors) — without this the pump
-      // would poll status 0 forever.
-      worker.addEventListener("error", (e: Event) => {
-        const message = (e as ErrorEvent).message ?? "unknown worker error"
-        entry.fatal = new Error(`A2 worker error: ${message}`)
+      // onError fires when the worker script fails to load/evaluate (the
+      // worker-side try/catch only covers onmessage-time errors) — without
+      // this the pump would poll status 0 forever. Worker construction and
+      // event wiring are runtime-shimmed (Bun Worker / node worker_threads,
+      // see runtime.ts).
+      entry.worker = spawnParallelWorker("a2BranchWorker", {
+        onError: (message) => {
+          entry.fatal = new Error(`A2 worker error: ${message}`)
+        },
+        onClose: () => {
+          if (entry.busy && entry.fatal === null) {
+            entry.fatal = new Error("A2 worker exited mid-task")
+          }
+        },
       })
-      worker.addEventListener("close", () => {
-        if (entry.busy && entry.fatal === null) {
-          entry.fatal = new Error("A2 worker exited mid-task")
-        }
-      })
+      entry.worker.unref()
       pool.push(entry)
     }
     a2Pool = pool
@@ -126,7 +133,7 @@ export const runA2Branches = (tasks: {
         w.busy = false
         results[branch] = payload as A2BranchResult
       }
-      if (!progressed) Bun.sleepSync(1)
+      if (!progressed) sleepSyncMs(1)
     }
 
     return results as { baseline: A2BranchResult; broad: A2BranchResult }

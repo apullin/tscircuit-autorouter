@@ -16,6 +16,7 @@
  */
 
 import { resolveHdNodeParallelism } from "./autoEnable"
+import { type ParallelWorkerHandle, spawnParallelWorker } from "./runtime"
 
 const RESULT_SAB_BYTES = 8 * 1024 * 1024
 const STATUS_OFFSET = 0
@@ -40,7 +41,7 @@ export type HdNodeResult = {
 }
 
 type PoolWorker = {
-  worker: Worker
+  worker: ParallelWorkerHandle
   resultSab: SharedArrayBuffer
   header: Int32Array
   busyWith: string | null
@@ -61,31 +62,33 @@ export class HdNodePool {
 
   constructor(workerCount: number, sharedContext: Record<string, unknown>) {
     for (let i = 0; i < workerCount; i++) {
-      const worker = new Worker(
-        new URL("./hdNodeWorker.ts", import.meta.url).href,
-      ) as Worker & { unref(): void }
-      worker.unref?.()
       const resultSab = new SharedArrayBuffer(RESULT_SAB_BYTES)
-      worker.postMessage({ type: "init", context: sharedContext })
       const entry: PoolWorker = {
-        worker,
+        // Assigned immediately below: spawnParallelWorker's lifecycle
+        // callbacks need to close over the entry object.
+        worker: null as unknown as ParallelWorkerHandle,
         resultSab,
         header: new Int32Array(resultSab, 0, 2),
         busyWith: null,
         fatal: null,
       }
-      // Fires when the worker script fails to load/evaluate (the worker-side
-      // try/catch only covers onmessage-time errors) — without this the pump
-      // would poll status 0 forever.
-      worker.addEventListener("error", (e: Event) => {
-        const message = (e as ErrorEvent).message ?? "unknown worker error"
-        entry.fatal = new Error(`hdNode worker error: ${message}`)
+      // onError fires when the worker script fails to load/evaluate (the
+      // worker-side try/catch only covers onmessage-time errors) — without
+      // this the pump would poll status 0 forever. Worker construction and
+      // event wiring are runtime-shimmed (Bun Worker / node worker_threads,
+      // see runtime.ts).
+      entry.worker = spawnParallelWorker("hdNodeWorker", {
+        onError: (message) => {
+          entry.fatal = new Error(`hdNode worker error: ${message}`)
+        },
+        onClose: () => {
+          if (entry.busyWith !== null && entry.fatal === null) {
+            entry.fatal = new Error("hdNode worker exited mid-task")
+          }
+        },
       })
-      worker.addEventListener("close", () => {
-        if (entry.busyWith !== null && entry.fatal === null) {
-          entry.fatal = new Error("hdNode worker exited mid-task")
-        }
-      })
+      entry.worker.unref?.()
+      entry.worker.postMessage({ type: "init", context: sharedContext })
       this.workers.push(entry)
     }
   }
