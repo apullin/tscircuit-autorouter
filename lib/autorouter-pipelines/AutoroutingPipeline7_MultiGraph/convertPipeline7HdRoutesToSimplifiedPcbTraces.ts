@@ -30,15 +30,27 @@ export const convertPipeline7HdRoutesToSimplifiedPcbTraces = ({
 }: ConvertPipeline7HdRoutesOptions): SimplifiedPcbTraces => {
   const traces: SimplifiedPcbTraces = []
 
+  // Single-pass grouping replaces the per-connection O(connections × routes)
+  // filter. Group order follows the hdRoutes array and the outer loop still
+  // follows `connections`, so trace output order matches the filter version
+  // exactly.
+  const routesByConnectionName = new Map<string, HighDensityRoute[]>()
+  for (const route of hdRoutes) {
+    let group = routesByConnectionName.get(route.connectionName)
+    if (!group) {
+      group = []
+      routesByConnectionName.set(route.connectionName, group)
+    }
+    group.push(route)
+  }
+
   for (const connection of connections) {
     const netConnectionName =
       connection.__netConnectionName ??
       originalConnections.find(
         (candidate) => candidate.name === connection.name,
       )?.__netConnectionName
-    const connectionRoutes = hdRoutes.filter(
-      (route) => route.connectionName === connection.name,
-    )
+    const connectionRoutes = routesByConnectionName.get(connection.name) ?? []
 
     if (connection.pointsToConnect.length !== 2) {
       throw new Error(

@@ -143,6 +143,12 @@ rm+cp also works. Never edit in place.
   === drcEvaluator (the pipeline passes one shared closure). Same values,
   computed once. Verified: s5 1053687 / s8 1973601 EXACT, DRC 0/41, output
   traces byte-identical, repo tsc clean.
+  2026-07-27 (perf/drc-p0 P0-adjacent, result-identical): createSimplifiedTraces
+  builds a routes-by-connection Map in one pass instead of the per-connection
+  O(connections × routes) map+filter; trace output order preserved exactly
+  (group order follows the routes array, outer loop still follows
+  srj.connections). Verified: s5 1053687 / s8 1973601 EXACT, DRC 0/41,
+  output traces byte-identical, repo tsc clean.
 - bun-tscircuit-math-utils@0.0.36.patch (added 2026-07-26; npm-hosted →
   patchedDependencies applies it automatically) — the whole-dist diff of the
   two PR-ready branches in ~/personal/math-utils-fix: orientation() collinearity
