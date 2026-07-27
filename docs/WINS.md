@@ -5,6 +5,15 @@ perf-audit-2026-07-23.md. Baselines: main @ v0.0.714 (b7b243cc), 64-thread x86, 
 
 ## Confirmed
 
+- **2026-07-27 (closing) — AGGREGATE vs TOP-OF-TREE NOW 4.44x (lower bound), P50/board
+  4.55x, 16/16 completions, DRC parity-or-better.** Closing gauntlet on stack HEAD
+  09b2083b (auto workers + A2 + D1 default-on + phase-2b checks), srj18 ×16, quiet
+  box, same conditions as the afternoon 3.99x run: stack 932.6s → 838.6s (**1.112x
+  gained in one day** from simplification indexes + DRC P0 + D1 + checks phase 2),
+  baseline 3724.7s → **4.44x**. Per-board min 2.21x (s5), max 7.36x (s8:
+  324.4→44.1s); DRC equal on 12 boards, better on s7 (7→5) and s8 (45→41). Raw:
+  perf-artifacts/agg-2026-07-27/final-gauntlet-evening.jsonl.
+
 - **2026-07-27 (late) — D1 INCREMENTAL DRC landed (merge ee81a48d): stage-2 wall s8
   ~1.6x / s12 ~2.0x, decision-identical, flag default OFF pending corpus gate.**
   TS_INCREMENTAL_DRC=1: candidates screened by a pruned-input delta evaluation
