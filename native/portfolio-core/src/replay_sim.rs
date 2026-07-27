@@ -11,7 +11,7 @@
 //! schedule ("commit candidates whose virtual iterations reached completion
 //! when the winner landed"), and replay-core's ABI does not expose `v[]`.
 //! This module is a verbatim transcription of replay-core's private
-//! simulator with exactly three deltas:
+//! simulator with exactly four deltas:
 //!   (1) SimOutcome carries the final `v` vector (for the cache commit);
 //!   (2) an optional `external_max_rounds` ceiling implements the
 //!       GrowShrink externalMaxIterations mirror (PORT-SPEC section 4;
@@ -21,7 +21,11 @@
 //!       iterations > MAX_ITERATIONS — BaseSolver.ts:33-51), so the round
 //!       executing at ceiling+1 still runs and may still declare a winner;
 //!   (3) trajectories are read from a shared payload slice via
-//!       (traj_offset, traj_len), same as replay-core's Dataset layout.
+//!       (traj_offset, traj_len), same as replay-core's Dataset layout;
+//!   (4) `progress_at` is pub(crate) — visibility only, body untouched: the
+//!       SEQUENTIAL supervisor mode (src/seq.rs) samples recorded
+//!       trajectories of TS-executed candidates on the identical grid and
+//!       must not fork the indexing math.
 //! Runtime.rs cross-checks this module's winner against replay-core's on
 //! EVERY node (hard error on disagreement) whenever the ceiling did not
 //! fire, so any drift between the copy and the proven crate is caught
@@ -170,7 +174,10 @@ pub fn candidate_g(c: &SimCandidate, iterations: f64) -> f64 {
 
 /// progressAt — replayPool.ts:197-207, re-indexed to the schedule grid
 /// (bit-exact; see replay-core datasetFormat.ts module doc).
-fn progress_at(
+/// pub(crate) is delta (4): seq.rs calls it with `expanded = false` to read
+/// the RAW grid sample (the pre-expansion live-h input) for one candidate's
+/// own trajectory slice (traj_offset 0, payload = that candidate's traj).
+pub(crate) fn progress_at(
     c: &SimCandidate,
     node_segment_count: f64,
     payload: &[f32],

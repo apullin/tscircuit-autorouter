@@ -841,9 +841,12 @@ export class PortfolioSingleIntraNodeSolver extends HyperParameterSupervisorSolv
   override _step() {
     if (
       typeof process !== "undefined" &&
-      (Number(process.env.TS_NATIVE_PORTFOLIO ?? 0) || 0) > 0
+      ((Number(process.env.TS_NATIVE_PORTFOLIO ?? 0) || 0) > 0 ||
+        process.env.TS_NATIVE_PORTFOLIO === "seq")
     ) {
       // Rust portfolio runtime (native/portfolio-core, Gate A bit-exact).
+      // TS_NATIVE_PORTFOLIO=seq (or TS_NATIVE_PORTFOLIO_SEQ=1) selects the
+      // live-sequential mirror mode; the driver picks the mode.
       // Lazy require keeps the main build free of native/ deps.
       const {
         nativePortfolioStep,

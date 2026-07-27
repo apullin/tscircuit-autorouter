@@ -33,6 +33,15 @@
  *     TS_ABANDON_MAX_PROGRESS, TS_NODE_WORK_CAP, TS_LEAN_PORTFOLIO) — this
  *     path mirrors parallelReplayStep, which ignores them.
  *
+ *     SEQUENTIAL MODE (post-Gate-B): TS_NATIVE_PORTFOLIO=seq (or
+ *     TS_NATIVE_PORTFOLIO_SEQ=1 alongside TS_NATIVE_PORTFOLIO=1) selects the
+ *     live-sequential supervisor mirror (src/seq.rs, hp-wrapper
+ *     "mode":"seq"): single-threaded, work-avoiding, winner-identical to the
+ *     live TS schedule. Expensive non-dominant candidates (A01/A03/polyline)
+ *     ship as ctor-state stubs and are executed TS-side only when the native
+ *     schedule picks one (needTsCandidates retry loop) — see
+ *     INSTANT_HP_KEYS.
+ *
  *  2) CLI: the golden-verification comparator (PORT-SPEC section 7):
  *       bun native/portfolio-core/driver.ts <golden.jsonl>
  *            [--lib <so>] [--threads N] [--shared-cache] [--max-nodes N]
@@ -97,6 +106,15 @@ const lastError = (lib: PfLib): string => {
 
 export type NativePortfolioResult = {
   nodeId: string
+  /** "seq" results carry the mode marker; rtc results omit it. */
+  mode?: "seq"
+  /**
+   * seq mode only: the schedule PICKED one of these tsrec stubs and needs
+   * the real record — run them TS-side (runTsCandidate) and re-run the node
+   * (nothing was committed; the re-run replays deterministically from the
+   * identical pre-node cache). See src/seq.rs DIFF-3.
+   */
+  needTsCandidates?: number[]
   winnerIndex: number
   solved: boolean
   winnerSource: "rust" | "ts" | null
@@ -106,9 +124,17 @@ export type NativePortfolioResult = {
     i: number
     source: "rust" | "ts"
     solved: boolean
+    /** seq mode: current live failed state (rtc encodes failure as !solved). */
+    failed?: boolean
     iterations: number
     maxIterations: number
     solvedSegments: number
+    /** seq mode: the schedule picked this candidate at least once. */
+    stepped?: boolean
+    /** seq mode: reached a terminal state under the sequential schedule. */
+    completed?: boolean
+    /** seq mode: this record was still a ctor-state stub at the end. */
+    stub?: boolean
     traj?: number[]
     error?: string
     routes?: unknown[]
@@ -132,6 +158,15 @@ export type TsCandidateRecord = {
   traj: number[]
   routes: unknown[] | null
   error?: string
+  /**
+   * seq-mode ctor-state stub (runTsCandidateStub): maxIterations + the
+   * construction-time solved/failed flags only; iterations 0, traj empty.
+   * The native schedule aborts with needTsCandidates when it first PICKS a
+   * stub. Invalid in rtc mode.
+   */
+  stub?: boolean
+  /** Stubs only: failed AT CONSTRUCTION (e.g. ineligible singleLayer). */
+  failed?: boolean
 }
 
 export class NativePortfolioSession {
@@ -166,12 +201,15 @@ export class NativePortfolioSession {
     tsrec: TsCandidateRecord[]
     externalMaxIterations?: number | null
     emitAllRoutes?: boolean
+    /** "rtc" (default) or "seq" — src/runtime.rs RunMode. */
+    mode?: "rtc" | "seq"
   }): NativePortfolioResult {
     const hpJson = enc.encode(
       JSON.stringify({
         initialCount: run.initialCount,
         externalMaxIterations: run.externalMaxIterations ?? null,
         emitAllRoutes: run.emitAllRoutes ?? false,
+        mode: run.mode ?? "rtc",
         hps: run.hps,
       }),
     )
@@ -229,6 +267,29 @@ const NON_DOMINANT_HP_KEYS = [
 
 export const isDominantHp = (hp: Record<string, unknown>): boolean =>
   !NON_DOMINANT_HP_KEYS.some((k) => hp[k])
+
+/**
+ * Seq-mode TS-side execution policy. The "instant" classes finish at 0-1
+ * iterations (measured on golden-s8: throughObstacle/closedForm always 0,
+ * singleLayer <= 1) — running them eagerly costs nothing and the live
+ * schedule always steps them first anyway (indices 0-1, f = g(0) = 0). The
+ * expensive classes (A01 mean ~50k iterations, A03 ~5k, polyline ~53) start
+ * as ctor-state STUBS and are only run when the native schedule actually
+ * PICKS one (needTsCandidates retry) — on golden-s8, 951/1209 winners land
+ * at index 0-9, where the live schedule never touches A01/A03/polyline at
+ * all; eager full pre-runs would re-create the Gate B work multiplier on
+ * the TS side.
+ */
+const INSTANT_HP_KEYS = [
+  "THROUGH_OBSTACLE",
+  "SINGLE_LAYER_NO_DIFFERENT_ROOT_INTERSECTIONS",
+  "CLOSED_FORM_SINGLE_TRANSITION",
+  "CLOSED_FORM_TWO_TRACE_SAME_LAYER",
+  "CLOSED_FORM_TWO_TRACE_TRANSITION_CROSSING",
+] as const
+
+const isInstantHp = (hp: Record<string, unknown>): boolean =>
+  INSTANT_HP_KEYS.some((k) => hp[k])
 
 /** Adaptive-expansion candidates: ORDERING_SHUFFLE_SEEDS.slice(1)
  * (PortfolioSingleIntraNodeSolver.ts:39, 548, 659-661). Keep in sync. */
@@ -324,6 +385,44 @@ export const runTsCandidate = (
   }
 }
 
+/**
+ * Seq mode: build a ctor-state STUB for one non-dominant candidate —
+ * generateSolver + idempotent setup, NO stepping. This is exactly the live
+ * initializeSolvers cost for that candidate
+ * (PortfolioSingleIntraNodeSolver.ts:509-528: construct + setup every
+ * candidate before any step), and it captures everything the schedule can
+ * observe before first picking it: post-setup MAX_ITERATIONS and the
+ * ctor-time solved/failed flags.
+ */
+export const runTsCandidateStub = (
+  portfolio: PortfolioLike,
+  hp: Record<string, unknown>,
+  index: number,
+): TsCandidateRecord => {
+  const solver = portfolio.generateSolver(hp) as {
+    solved: boolean
+    failed: boolean
+    error?: string | null
+    MAX_ITERATIONS: number
+    setup?: () => void
+  }
+  if ("setup" in solver && typeof solver.setup === "function") {
+    solver.setup.call(solver)
+  }
+  return {
+    i: index,
+    stub: true,
+    solved: !!solver.solved,
+    failed: !!solver.failed,
+    iterations: 0,
+    maxIterations: solver.MAX_ITERATIONS,
+    solvedSegments: -1,
+    traj: [],
+    routes: null,
+    error: solver.failed ? (solver.error ?? "failed") : undefined,
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Node-shared input marshaling (the golden "node" line shape — the same
 // object shape pf_load_node parses; see runtime.rs parse_node_session)
@@ -380,13 +479,25 @@ export const buildNodeInput = (
 
 let globalSession: NativePortfolioSession | null = null
 
+/**
+ * Sequential mode selector: TS_NATIVE_PORTFOLIO_SEQ=1, or
+ * TS_NATIVE_PORTFOLIO=seq. The sequential schedule runs on the FFI caller's
+ * thread — the session's rayon pool is never used in this mode (src/seq.rs).
+ */
+export const seqModeSelected = (): boolean =>
+  typeof process !== "undefined" &&
+  (process.env.TS_NATIVE_PORTFOLIO === "seq" ||
+    (Number(process.env.TS_NATIVE_PORTFOLIO_SEQ ?? 0) || 0) > 0)
+
 /** One session per process: the Rust SharedCache must persist across nodes
  * (all cache hits are across solves — PORT-SPEC section 5). */
 export const getNativeSession = (): NativePortfolioSession => {
   if (!globalSession) {
     const flag = Number(process.env.TS_NATIVE_PORTFOLIO ?? 0) || 0
     globalSession = new NativePortfolioSession({
-      threads: flag > 1 ? flag : 0,
+      // seq mode: single thread — the pool is idle by design; keep it
+      // minimal instead of spawning min(cores, 8) sleeping workers.
+      threads: seqModeSelected() ? 1 : flag > 1 ? flag : 0,
     })
   }
   return globalSession
@@ -420,23 +531,55 @@ export const nativePortfolioStep = (portfolio: PortfolioLike): void => {
     hyperParameterList.push({ HIGH_DENSITY_A01: true, SHUFFLE_SEED: shuffleSeed })
   }
 
+  const seq = seqModeSelected()
+
   // Non-dominant classes run TS-side (increment 1 policy, PORT-SPEC 2b/C3);
-  // their records merge into the same selection by index.
-  const tsrec: TsCandidateRecord[] = []
+  // their records merge into the same selection by index. rtc runs them all
+  // to completion up-front; seq runs only the instant classes eagerly and
+  // ships ctor-state stubs for the expensive ones (see INSTANT_HP_KEYS doc),
+  // upgrading a stub to a full record only when the native schedule PICKS it
+  // (needTsCandidates retry below).
+  const tsrecByIndex = new Map<number, TsCandidateRecord>()
   for (let i = 0; i < hyperParameterList.length; i++) {
     const hp = hyperParameterList[i]!
     if (isDominantHp(hp)) continue
-    tsrec.push(runTsCandidate(portfolio, hp, i))
+    tsrecByIndex.set(
+      i,
+      !seq || isInstantHp(hp)
+        ? runTsCandidate(portfolio, hp, i)
+        : runTsCandidateStub(portfolio, hp, i),
+    )
   }
 
   const session = getNativeSession()
   session.loadNode(buildNodeInput(portfolio))
-  const res = session.runPortfolio({
-    initialCount,
-    hps: hyperParameterList,
-    tsrec,
-    externalMaxIterations: portfolio.externalMaxIterations ?? null,
-  })
+  let res: NativePortfolioResult
+  let seqFetches = 0
+  for (let attempt = 0; ; attempt++) {
+    res = session.runPortfolio({
+      initialCount,
+      hps: hyperParameterList,
+      tsrec: [...tsrecByIndex.values()],
+      externalMaxIterations: portfolio.externalMaxIterations ?? null,
+      mode: seq ? "seq" : "rtc",
+    })
+    const need = res.needTsCandidates
+    if (!need || need.length === 0) break
+    // The sequential schedule wants these candidates' real behavior: run
+    // them TS-side (deterministic — the record equals what the live
+    // schedule would have observed) and re-run the node. Nothing was
+    // committed on the need path, so the re-run replays the identical
+    // schedule prefix from the identical pre-node cache.
+    if (attempt >= 8) {
+      throw new Error(
+        `native seq mode did not converge after ${attempt} tsrec fetch rounds (need=[${need.join(",")}])`,
+      )
+    }
+    for (const i of need) {
+      seqFetches++
+      tsrecByIndex.set(i, runTsCandidate(portfolio, hyperParameterList[i]!, i))
+    }
+  }
 
   if (res.winnerIndex >= 0 && res.routes) {
     // Rust winners return RAW solvedRoutes: apply the TS-side normalization
@@ -459,6 +602,11 @@ export const nativePortfolioStep = (portfolio: PortfolioLike): void => {
   } else {
     portfolio.failed = true
     portfolio.error = res.error ?? "All candidates failed in native portfolio"
+  }
+  if (seq) {
+    portfolio.stats.nativePortfolioSeq = true
+    portfolio.stats.nativePortfolioSeqFetches = seqFetches
+    portfolio.stats.nativePortfolioSeqRounds = res.replay.rounds
   }
 }
 
@@ -523,6 +671,7 @@ const goldenMain = async () => {
   let sharedCache = false
   let maxNodes = Infinity
   let verbose = false
+  let mode: "rtc" | "seq" = "rtc"
   const nodeFilter = new Set<string>()
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!
@@ -531,7 +680,14 @@ const goldenMain = async () => {
     else if (a === "--shared-cache") sharedCache = true
     else if (a === "--max-nodes") maxNodes = Number(args[++i] ?? Infinity)
     else if (a === "--verbose") verbose = true
-    else if (a === "--node") {
+    else if (a === "--mode") {
+      const m = args[++i]
+      if (m !== "rtc" && m !== "seq") {
+        console.error(`--mode must be rtc or seq, got: ${m}`)
+        process.exit(2)
+      }
+      mode = m
+    } else if (a === "--node") {
       // Repeatable and/or comma-separated golden nodeId filter — run only the
       // named nodes (cheap single-node iteration against the 122MB JSONL).
       for (const id of (args[++i] ?? "").split(",")) {
@@ -547,7 +703,7 @@ const goldenMain = async () => {
     console.error(
       "usage: bun native/portfolio-core/driver.ts <golden.jsonl> " +
         "[--lib <so>] [--threads N] [--shared-cache] [--max-nodes N] " +
-        "[--node id[,id...]] [--verbose]",
+        "[--node id[,id...]] [--mode rtc|seq] [--verbose]",
     )
     process.exit(2)
   }
@@ -569,8 +725,19 @@ const goldenMain = async () => {
   let cacheImplicated = 0
   let captureArtifacts = 0
   let runErrors = 0
+  // --mode seq counters. Golden winners are REPLAY-schedule winners, which
+  // can legitimately differ from the live-sequential schedule on the known
+  // cache/solved-at-0 classes (src/seq.rs live-vs-replay differences) — so
+  // winner agreement is INFORMATIONAL for seq; the hard assertions are
+  // per-candidate: every candidate the sequential schedule ran to completion
+  // must match its golden record on solved+iterations (Gate A determinism),
+  // and no still-running candidate may have stepped past its recorded
+  // completion.
+  let seqWinnerAgree = 0
+  let seqCompletedCompared = 0
   const mismatchLines: string[] = []
   const artifactLines: string[] = []
+  const winnerInfoLines: string[] = []
 
   const processNode = (nodeLine: GoldenNodeLine, cands: GoldenCandLine[]) => {
     nodes++
@@ -598,6 +765,76 @@ const goldenMain = async () => {
     const sess = session ?? new NativePortfolioSession({ threads, libPath })
     try {
       sess.loadNode(nodeLine as unknown as Record<string, unknown>)
+
+      if (mode === "seq") {
+        // Golden records provide full tsrec for every non-dominant
+        // candidate, so the schedule must never ask for more.
+        const res = sess.runPortfolio({
+          initialCount: nodeLine.initialCount,
+          hps,
+          tsrec,
+          mode: "seq",
+        })
+        if (res.needTsCandidates && res.needTsCandidates.length > 0) {
+          candMismatch++
+          mismatchLines.push(
+            `NEED node ${nodeLine.nodeId}: seq asked for [${res.needTsCandidates.join(",")}] despite full golden tsrec`,
+          )
+          return
+        }
+        if (res.winnerIndex === nodeLine.winnerIndex) {
+          seqWinnerAgree++
+        } else {
+          winnerInfoLines.push(
+            `WINNER(info) node ${nodeLine.nodeId}: golden(replay)=${nodeLine.winnerIndex} seq(live)=${res.winnerIndex}`,
+          )
+        }
+        for (const g of cands) {
+          if (!isDominantHp(g.hp)) continue // tsrec candidates ARE the golden
+          const rc = res.perCandidate[g.i]
+          if (!rc || rc.source !== "rust") {
+            candMismatch++
+            mismatchLines.push(
+              `CAND node ${nodeLine.nodeId} i=${g.i}: missing rust record`,
+            )
+            continue
+          }
+          if (rc.completed) {
+            seqCompletedCompared++
+            if (rc.solved !== g.solved || rc.iterations !== g.iterations) {
+              // Same accounting as rtc: a side that completed at iteration 1
+              // hit a cache (golden workers had worker-private caches; the
+              // default fresh-per-node native session is cold).
+              const cacheish = g.iterations === 1 || rc.iterations === 1
+              if (cacheish) cacheImplicated++
+              else candMismatch++
+              mismatchLines.push(
+                `SEQCAND node ${nodeLine.nodeId} i=${g.i} completed` +
+                  `${cacheish ? " (cache-implicated)" : ""}` +
+                  ` golden solved=${g.solved} iters=${g.iterations}` +
+                  ` seq solved=${rc.solved} iters=${rc.iterations}`,
+              )
+            }
+          } else if (rc.iterations > g.iterations) {
+            // A still-running candidate can never exceed its deterministic
+            // completion point.
+            candMismatch++
+            mismatchLines.push(
+              `SEQCAND node ${nodeLine.nodeId} i=${g.i} running past golden:` +
+                ` seq iters=${rc.iterations} > golden iters=${g.iterations}`,
+            )
+          }
+        }
+        if (verbose) {
+          console.log(
+            `node ${nodeLine.nodeId}: winner golden=${nodeLine.winnerIndex} seq=${res.winnerIndex}` +
+              ` rounds=${res.replay.rounds} work=${res.replay.totalCandidateWork}` +
+              ` expanded=${res.replay.expanded} committed=${res.cache.committed}`,
+          )
+        }
+        return
+      }
+
       const res = sess.runPortfolio({
         initialCount: nodeLine.initialCount,
         hps,
@@ -786,6 +1023,28 @@ const goldenMain = async () => {
   }
   if (currentNode && nodes < maxNodes) processNode(currentNode, currentCands)
   session?.free()
+
+  if (mode === "seq") {
+    console.log(
+      `nodes: ${nodes} (mode seq)\n` +
+        `winner agreement vs replay-path golden (informational): ${seqWinnerAgree}/${nodes}\n` +
+        `completed rust candidates compared: ${seqCompletedCompared}\n` +
+        `hard candidate mismatches: ${candMismatch}\n` +
+        `cache-implicated deltas (soft): ${cacheImplicated}\n` +
+        `run errors: ${runErrors}`,
+    )
+    for (const l of winnerInfoLines.slice(0, 20)) console.log(l)
+    if (winnerInfoLines.length > 20) {
+      console.log(`... and ${winnerInfoLines.length - 20} more winner infos`)
+    }
+    for (const l of mismatchLines.slice(0, 40)) console.log(l)
+    if (mismatchLines.length > 40) {
+      console.log(`... and ${mismatchLines.length - 40} more`)
+    }
+    const clean = candMismatch === 0 && runErrors === 0
+    console.log(clean ? "SEQ GOLDEN CHECK: OK" : "SEQ GOLDEN CHECK: FAILED")
+    process.exit(clean ? 0 : 1)
+  }
 
   console.log(
     `nodes: ${nodes}, rust candidates compared: ${candCompared}\n` +

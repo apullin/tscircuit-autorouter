@@ -288,19 +288,33 @@ pub struct HpEntry {
     pub val: JVal,
 }
 
+/// Which schedule drives the node (the "mode" key of the hp wrapper).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum RunMode {
+    /// Run-to-completion + replay selection (the Gate A/B path; default).
+    Rtc,
+    /// Live-sequential supervisor mirror (src/seq.rs): one candidate at a
+    /// time, MIN_SUBSTEPS per pick, single-threaded, no rayon.
+    Seq,
+}
+
 /// `hp_list_json` payload of pf_run_portfolio:
 /// {"initialCount": N, "externalMaxIterations": M|null, "emitAllRoutes": b,
-///  "hps": [hp, ...]}   (hps = full candidate list in TS enumeration order =
-/// tie-break order — marshaled from TS per PORT-SPEC §2b, NEVER re-derived
-/// here).
+///  "mode": "rtc"|"seq", "hps": [hp, ...]}   (hps = full candidate list in
+/// TS enumeration order = tie-break order — marshaled from TS per PORT-SPEC
+/// §2b, NEVER re-derived here; "mode" defaults to "rtc").
 pub struct RunInput {
     pub initial_count: usize,
     /// GrowShrink ceiling (PortfolioSingleIntraNodeSolver.ts:434-464);
-    /// honored as a replay-round ceiling — see replay_sim.rs delta (2).
+    /// honored as a replay-round ceiling — see replay_sim.rs delta (2) — or,
+    /// in seq mode, as the live externalMaxIterations cap on the supervisor
+    /// budget (:457-462).
     pub external_max_iterations: Option<f64>,
     /// Golden-verification mode: echo every solved Rust candidate's raw
-    /// routes in perCandidate (production keeps winner-only).
+    /// routes in perCandidate (production keeps winner-only; seq ignores it
+    /// — CandidateSolver only surrenders routes by value for the winner).
     pub emit_all_routes: bool,
+    pub mode: RunMode,
     pub hps: Vec<HpEntry>,
 }
 
@@ -322,6 +336,13 @@ pub fn parse_run_input(bytes: &[u8]) -> Result<RunInput, String> {
         .get("emitAllRoutes")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let mode = match top.get("mode") {
+        None | Some(JVal::Null) => RunMode::Rtc,
+        Some(JVal::Str(s)) if s == "rtc" => RunMode::Rtc,
+        Some(JVal::Str(s)) if s == "seq" => RunMode::Seq,
+        Some(JVal::Str(s)) => return Err(format!("hp_list: unknown mode '{}'", s)),
+        Some(_) => return Err("hp_list: 'mode' is not a string".to_string()),
+    };
     let hps_j = top
         .get("hps")
         .and_then(|v| v.as_arr())
@@ -352,6 +373,7 @@ pub fn parse_run_input(bytes: &[u8]) -> Result<RunInput, String> {
         initial_count: initial_count as usize,
         external_max_iterations,
         emit_all_routes,
+        mode,
         hps,
     })
 }
@@ -362,6 +384,17 @@ pub fn parse_run_input(bytes: &[u8]) -> Result<RunInput, String> {
 /// post-extractWinningRoutes (worker semantics, portfolioReplayWorker.ts:112)
 /// and Rust never interprets them — a TS winner's routes are spliced back
 /// verbatim.
+///
+/// SEQ-MODE STUBS (`"stub": true`, driver.ts runTsCandidateStub): a record
+/// carrying only the candidate's CONSTRUCTION state — post-setup
+/// maxIterations plus the ctor-time solved/failed flags (live
+/// initializeSolvers constructs + setups every candidate before any step,
+/// PortfolioSingleIntraNodeSolver.ts:509-528, so these are exactly the
+/// observables the schedule can see before first picking the candidate).
+/// iterations must be 0 and traj empty. The seq schedule aborts with a
+/// `needTsCandidates` result the moment it PICKS a stub (the driver then
+/// runs that candidate for real and re-runs the node). Stubs are invalid in
+/// rtc mode (hard error) — the replay path consumes full trajectories only.
 pub struct TsRecord {
     pub index: usize,
     pub solved: bool,
@@ -371,6 +404,12 @@ pub struct TsRecord {
     pub traj: Vec<f32>,
     pub error: Option<String>,
     pub routes_raw: Option<String>,
+    /// `"stub": true` — ctor-state-only record (seq mode; see above).
+    pub stub: bool,
+    /// Stub records only: the candidate was failed AT CONSTRUCTION (e.g. the
+    /// ineligible singleLayer solver, PortfolioSingleIntraNodeSolver.ts:
+    /// 982-999). Full records encode failure as solved=false + completion.
+    pub ctor_failed: bool,
 }
 
 pub fn parse_tsrec(bytes: &[u8]) -> Result<Vec<TsRecord>, String> {
@@ -432,6 +471,14 @@ pub fn parse_tsrec(bytes: &[u8]) -> Result<Vec<TsRecord>, String> {
             Some(JVal::Str(s)) => Some(s.clone()),
             _ => None,
         };
+        let stub = rec.get("stub").and_then(|v| v.as_bool()).unwrap_or(false);
+        let ctor_failed = rec.get("failed").and_then(|v| v.as_bool()).unwrap_or(false);
+        if stub && (iterations != 0.0 || !traj.is_empty()) {
+            return Err(format!(
+                "{}: stub record must have iterations 0 and an empty traj",
+                ctx()
+            ));
+        }
         // Raw span of the routes value (only when it is an actual array).
         let routes_raw = if matches!(rec.get("routes"), Some(JVal::Arr(_))) {
             let entry_spans =
@@ -452,12 +499,51 @@ pub fn parse_tsrec(bytes: &[u8]) -> Result<Vec<TsRecord>, String> {
             traj,
             error,
             routes_raw,
+            stub,
+            ctor_failed,
         });
     }
     Ok(out)
 }
 
-fn hp_from_entry(entry: &HpEntry, idx: usize) -> Result<Hp, String> {
+/// Index tsrec entries by candidate index, rejecting out-of-range and
+/// duplicate indices (shared by the rtc and seq paths).
+pub(crate) fn index_tsrecs<'a>(
+    n: usize,
+    tsrecs: &'a [TsRecord],
+) -> Result<Vec<Option<&'a TsRecord>>, String> {
+    let mut ts_by_index: Vec<Option<&TsRecord>> = vec![None; n];
+    for r in tsrecs {
+        if r.index >= n {
+            return Err(format!(
+                "tsrec index {} out of range (candidates: {})",
+                r.index, n
+            ));
+        }
+        if ts_by_index[r.index].is_some() {
+            return Err(format!("duplicate tsrec index {}", r.index));
+        }
+        ts_by_index[r.index] = Some(r);
+    }
+    Ok(ts_by_index)
+}
+
+/// Guard: a candidate Rust is about to execute must be dominant-class — its
+/// hp must contain none of the generateSolver marker keys (shared by the rtc
+/// and seq paths; the candidate-class split itself is decided TS-side).
+pub(crate) fn ensure_dominant(hp_val: &JVal, i: usize) -> Result<(), String> {
+    for key in NON_DOMINANT_HP_KEYS {
+        if js_truthy(hp_val.get(key)) {
+            return Err(format!(
+                "candidate {} hp contains '{}': non-dominant class — must be executed TS-side and marshaled via tsrec",
+                i, key
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn hp_from_entry(entry: &HpEntry, idx: usize) -> Result<Hp, String> {
     match &entry.val {
         JVal::Obj(entries) => Ok(Hp::from_raw(entries.clone())),
         _ => Err(format!("candidate {}: hp is not an object", idx)),
@@ -631,36 +717,32 @@ pub fn run_portfolio(
 ) -> Result<String, String> {
     let run = parse_run_input(hp_bytes)?;
     let tsrecs = parse_tsrec(tsrec_bytes)?;
+
+    // mode "seq": the live-sequential supervisor mirror. Single-threaded by
+    // design — the rayon pool is deliberately NOT passed (zero contention,
+    // zero dispatch: the whole point of the sequential schedule).
+    if run.mode == RunMode::Seq {
+        return crate::seq::run_portfolio_seq(session, cache, &run, &tsrecs);
+    }
+    // Stub records carry no trajectory; the replay path cannot consume them.
+    if let Some(s) = tsrecs.iter().find(|r| r.stub) {
+        return Err(format!(
+            "tsrec index {}: stub records are only valid in mode \"seq\"",
+            s.index
+        ));
+    }
+
     let n = run.hps.len();
     let initial_count = run.initial_count.min(n);
 
     // Index the TS records; reject out-of-range/duplicate indices.
-    let mut ts_by_index: Vec<Option<&TsRecord>> = vec![None; n];
-    for r in &tsrecs {
-        if r.index >= n {
-            return Err(format!(
-                "tsrec index {} out of range (candidates: {})",
-                r.index, n
-            ));
-        }
-        if ts_by_index[r.index].is_some() {
-            return Err(format!("duplicate tsrec index {}", r.index));
-        }
-        ts_by_index[r.index] = Some(r);
-    }
+    let ts_by_index = index_tsrecs(n, &tsrecs)?;
 
     // Rust runs every index TS did not; guard that each is dominant-class.
     let mut work: Vec<(usize, Hp)> = Vec::new();
     for i in 0..n {
         if ts_by_index[i].is_none() {
-            for key in NON_DOMINANT_HP_KEYS {
-                if js_truthy(run.hps[i].val.get(key)) {
-                    return Err(format!(
-                        "candidate {} hp contains '{}': non-dominant class — must be executed TS-side and marshaled via tsrec",
-                        i, key
-                    ));
-                }
-            }
+            ensure_dominant(&run.hps[i].val, i)?;
             work.push((i, hp_from_entry(&run.hps[i], i)?));
         }
     }
@@ -948,7 +1030,8 @@ pub fn run_portfolio(
 }
 
 /// Serialize raw HdRoutes in lib/types/high-density-types.ts field naming.
-fn write_routes(out: &mut String, routes: &[HdRoute]) {
+/// (Shared with the seq mode's result assembly.)
+pub(crate) fn write_routes(out: &mut String, routes: &[HdRoute]) {
     out.push('[');
     for (i, r) in routes.iter().enumerate() {
         if i > 0 {

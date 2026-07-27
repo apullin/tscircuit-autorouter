@@ -49,6 +49,7 @@ pub mod js_num;
 pub mod ffi;
 pub mod replay_sim;
 pub mod runtime;
+pub mod seq; // mode "seq": live-sequential supervisor mirror (single-threaded)
 
 pub use cache::SharedCache;
 pub use contract::{

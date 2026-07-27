@@ -785,6 +785,24 @@ impl<'a> CandidateSolver<'a> {
 // Free helpers
 // ---------------------------------------------------------------------------
 
+/// The post-setup iteration budget every DOMINANT-class candidate of this
+/// node gets, computable WITHOUT constructing a solver:
+/// `1_000 * totalConnections ** 1.5` (IntraNodeSolver.ts:172-173), where
+/// totalConnections is the number of distinct connections after the ctor's
+/// insertion-order grouping (:115-134) — i.e. the distinct `conn` count
+/// (shuffling permutes but never changes the count, so the value is
+/// hp-independent). Used by the sequential supervisor mode (src/seq.rs) for
+/// getDynamicExpansionWorkBudget (PortfolioSingleIntraNodeSolver.ts:236-247)
+/// and refreshDynamicIterationLimit (:436-464) before lazy construction;
+/// `dominant_budget_matches_ctor` locks it to `CandidateSolver::new`.
+pub fn dominant_max_iterations(session: &NodeSession) -> f64 {
+    let mut seen: HashSet<u32> = HashSet::new();
+    for pp in &session.port_points {
+        seen.insert(pp.conn);
+    }
+    1000.0 * (seen.len() as f64).powf(1.5)
+}
+
 /// pointKey (IntraNodeSolver.ts:35-36):
 /// `${x.toFixed(6)},${y.toFixed(6)},${z}` — exact JS ToFixed (half-away-
 /// from-zero decimal ties DO occur on dyadic mesh coordinates, §6.9) and

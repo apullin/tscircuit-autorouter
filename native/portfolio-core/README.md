@@ -116,6 +116,55 @@ gap in the sketch):
   hdastar. Panics (including `todo!()` from pending sibling modules) are
   caught at the boundary and become `pf_last_error` text.
 
+## Sequential mode (`"mode":"seq"` — post-Gate-B)
+
+Gate B recorded the negative result: run-to-completion carries the full
+doomed-candidate cost the sequential schedule avoids (~9x+ work multiplier;
+threads lose). `src/seq.rs` is the follow-up: a line-faithful mirror of the
+LIVE adaptive supervisor schedule (NOT the replay semantics) driving real
+`CandidateSolver`s one at a time on the calling thread — no rayon pool, zero
+contention, the TS scheduler's work-avoidance kept exactly.
+
+- Schedule: stored-f pick with the live tie-break and the live
+  solved-short-circuit (HyperParameterSupervisorSolver.ts:120-137), 100-step
+  slices (:158-165), initial f = g(0) (:93-99), adaptive expansion per the
+  live triggers (PortfolioSingleIntraNodeSolver.ts:860-865, :949-951,
+  :236-247), live computeG/computeH overrides (:954-979), the
+  refreshDynamicIterationLimit budget + externalMaxIterations cap
+  (:436-464). Full doc: src/seq.rs module header, including the three
+  live-vs-replay differences deliberately mirrored on the LIVE side
+  (solved short-circuit, stale f across the expansion flip, expanded-h
+  clamping).
+- Candidate execution is Gate-A bit-exact and the schedule is
+  deterministic, so the winner is live-sequential-TS identical — stronger
+  than the replay path (no 549/550 caveat). On golden-s8 the seq winner
+  differs from the REPLAY-path golden winner on exactly 7/1221 nodes, all
+  of them closed-form solved-at-construction nodes where the live pick's
+  solved-short-circuit fires — the documented replay divergence class, now
+  on the live side.
+- Cache: each completing candidate's staged entry is collected in
+  COMPLETION ORDER and committed when the node ends — observationally
+  identical to the live mid-step saves (within-node keys are disjoint), so
+  cache evolution is order-identical to sequential TS (src/seq.rs DIFF-4).
+- Non-dominant candidates arrive as tsrec records consumed virtually.
+  Production laziness (driver.ts): instant classes run eagerly (0-1
+  iterations); A01/A03/polyline ship as ctor-state STUBS
+  (`runTsCandidateStub`) and are executed TS-side only when the schedule
+  actually PICKS one — the native run returns `needTsCandidates` and the
+  driver re-runs the node (nothing committed on that path, so the re-run
+  replays the identical schedule prefix). On golden-s8, 951/1209 winners
+  land at candidate index 0-9 where the live schedule never touches
+  A01/A03/polyline at all.
+- Plumbing: hp-wrapper `"mode":"seq"` (default `"rtc"`);
+  `TS_NATIVE_PORTFOLIO=seq` or `TS_NATIVE_PORTFOLIO_SEQ=1` (with
+  `TS_NATIVE_PORTFOLIO=1`) selects it in `nativePortfolioStep`.
+- Driver-level check: `bun native/portfolio-core/driver.ts <golden.jsonl>
+  --mode seq` — hard-asserts every schedule-completed dominant candidate
+  against its golden record (solved+iterations) and reports winner
+  agreement vs the replay-path golden informationally. 2026-07-27 run:
+  1221 nodes, 0 hard mismatches, 1214/1221 winner agreement (7 = the
+  solved-at-0 class above).
+
 ## Driver + integration point
 
 `driver.ts` (bun:ffi) exposes:
