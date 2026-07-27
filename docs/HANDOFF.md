@@ -1,5 +1,25 @@
 # HANDOFF — tscircuit autorouter performance work (2026-07-23/24)
 
+> **2026-07-27 UPDATE — TS frontier advanced on both tracks; Rust chapter closed by the
+> user.** (1) **G9 HD-node + A2 parallelism PRODUCTIZED** on perf-ts-stack (42d12713,
+> 83f46ea8): auto-enable off-benchmark/off-browser with hardware/memory/board-size
+> gates (explicit env always wins; benchmark.sh pins both to 0), full bookkeeping
+> parity on the parallel path, worker-side success-only intra-node cache (failure-cache
+> poisoning class closed worker-side). Gates: s5 anchor 1053687 exact under
+> TS_BENCHMARK=1; s8 sequential 1973601 exact DRC 41; s8 auto-enabled DRC 41==41 at
+> ~1.5x wall. Remaining for users on Node/browser: G7 runtime port.
+> (2) **G6 eviction+re-path: built, measured, PARKED negative-for-speed** (be0798ac).
+> The mechanism works (6/6 planned evictions rescued; over-commitment confirmed on
+> both boards) but rescue economics lose to growth: trimmed nodes are MARGINALLY
+> routable (near-exhaustion searches) while growth makes nodes EASY. s8 g=0: +8%
+> iterations/+3 DRC rejected; s6 g=1: DRC 96 vs 100 but +16% iterations rejected.
+> Machinery kept flag-off as the repair valve. **The remaining algorithmic lever is
+> capacity-model prevention (G10 in OUR_TODOS)**: getTunedTotalCapacity1 is tuned for
+> 2 layers on 4-layer boards; calibration data ready (PERF_NODE_DUMP labels, eviction
+> stats, growth-ladder corpus data). Full evidence: WINS.md 2026-07-27 entry +
+> perf-artifacts/g6-eviction-design.md epilogue. Rust: user closed it after the final
+> honest measurement (native seq 0.6x JSC) — the perf frontier is TS-side.
+
 > **CONSOLIDATION UPDATE (2026-07-26)** — a second-opinion review session (Claude Code /
 > Fable 5) audited the whole campaign and then consolidated it. Read these in order:
 > **REVIEW-2026-07-26.md** (findings: A2 pool bug fixed, hypot patch was dormant, stack

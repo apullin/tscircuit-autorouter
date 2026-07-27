@@ -191,11 +191,29 @@ perf-artifacts/kernel-inventory.md (accelerator analysis).
       with unchanged state (selective-rerip :196/:231→:334 — the second rebuild is R6, S-sized);
       owner Sets → insertion-ordered arrays + bitset. CAUTION: [...owners] order feeds rip order —
       a bare bitset is NOT identity-safe. Also the one remaining Math.hypot (:455).
-- [ ] **G6. Eviction + re-path of over-committed nodes — THE algorithmic lever.** Doomed nodes are
-      over-committed, not unroutable (40/40 rescued by one removal, 77% of removals work). Evicting
-      one net to a neighbor node at the assignment level attacks: the 68-88% wasted HD search, the
-      62.5s straggler bounding the parallel ceiling (s6), the 69% cross-node violations AND the 48x
-      grown-node DRC enrichment. Speed + quality + parallel ceiling in one move. Design-first.
+- [x] **G6. Eviction + re-path of over-committed nodes — BUILT, MEASURED, PARKED
+      (2026-07-27, be0798ac, negative for speed).** Local-detour eviction works
+      mechanically (TS_EVICT_REPATH, default off; 10 unit tests) and confirms
+      over-commitment on both boards, but rescue economics lose to growth:
+      trimmed nodes are MARGINALLY routable (near-exhaustion searches) while
+      growth makes nodes EASY. s8 g=0: 6 rescues, +8% iterations, +3 DRC —
+      rejected. s6 g=1: 1 rescue, DRC 96 vs 100, +16% iterations — rejected
+      for speed. Placement is the s6 bottleneck (rejectedPlans 5, victims 0
+      lacking). Machinery kept flag-off as the repair valve for the capacity
+      model path. Full data: perf-artifacts/g6-eviction-design.md epilogue.
+      ⇒ The lever is now unambiguously **capacity-model prevention**
+      (getTunedTotalCapacity1, tuned for 2 layers on 4-layer boards) with
+      PERF_NODE_DUMP labels + eviction stats as calibration truth.
+- [ ] **G10. Capacity-model prevention — THE remaining algorithmic lever (design-first).**
+      Every reactive path is now measured-closed: doomed nodes can't be predicted locally
+      (20975dbc), can't be cheaply rescued (G6: marginal-feasibility searches lose to
+      growth), can't be capped profitably (16da17b0). The planner over-commits nodes:
+      getTunedTotalCapacity1 is tuned for 2 layers while boards route 4 (20975dbc).
+      Calibration truth exists: PERF_NODE_DUMP's 1222 labelled nodes, eviction stats
+      (victims/placements per doomed node), and the GROWTH_SCHEDULE corpus data.
+      Goal: capacity formula that makes dense regions bigger/more numerous BEFORE the
+      HD stage, measured by doomed-node count on srj18 (target: most of the 12/board)
+      at fixed quality gates (anchors + DRC).
 - [ ] **G7. Runtime A/B: node/V8 (and browser) vs bun/JSC.** Every campaign number is bun/JSC;
       downstream users run Node and browsers. One A/B of the published dist under node vs bun on
       samples 5/8 could reshuffle priorities (megamorphic solver code JITs very differently).
@@ -203,7 +221,12 @@ perf-artifacts/kernel-inventory.md (accelerator analysis).
 - [ ] **G8. Growth-ladder corpus gate.** GROWTH_SCHEDULE="1.2,2,4,8" (exp/rewrites f354b3c2, NOT
       landed on the stack) moved s8 to 133s/31 DRC and s6 to 344s/98 vs 123s/45 and 268s/99 —
       a real quality/speed trade needing a full two-corpus gate as its own experiment.
-- [ ] **G9. HD-node + A2 parallelism productization**: on-by-default for CLI/server single-board
-      routes (memory budget permitting), off for benchmark throughput runs and browser. Needs the
-      per-node bookkeeping gaps closed (recordNodeSolveMetadata etc. skipped on the parallel path)
-      and a worker-cache determinism decision (see issue-failure-cache).
+- [x] **G9. HD-node + A2 parallelism productization — LANDED (2026-07-27, 42d12713 +
+      83f46ea8).** Auto-enable off-benchmark/off-browser with hardware/memory +
+      board-size gates; explicit env always wins; benchmark.sh pins both flags
+      to 0. Full bookkeeping parity on the parallel path; worker-side
+      success-only intra-node cache closes the failure-cache poisoning class.
+      Gates: s5 anchor exact under TS_BENCHMARK=1; s8 auto DRC 41==41,
+      wall ~1.5x (load-contaminated). Remaining: node/web-worker runtime port
+      (G7) so non-Bun users benefit; eviction+parallel composition (G6 v2,
+      needs the eviction economics fixed first).

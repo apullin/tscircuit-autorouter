@@ -5,6 +5,36 @@ perf-audit-2026-07-23.md. Baselines: main @ v0.0.714 (b7b243cc), 64-thread x86, 
 
 ## Confirmed
 
+- **2026-07-27 — G6 EVICTION+RE-PATH: mechanism built, measured, PARKED as
+  negative-for-speed (be0798ac); G9 HD-node parallelism PRODUCTIZED (42d12713,
+  83f46ea8 + earlier), auto-enable parity gate holds.** Full G6 writeup:
+  perf-artifacts/g6-eviction-design.md epilogue. Local-detour eviction
+  (TS_EVICT_REPATH, default off) works mechanically — chain surgery on
+  per-node port-point copies, dirty-recipient re-solve, downstream clone
+  re-sync — and confirms over-commitment on both boards (victims everywhere;
+  6/6 planned evictions rescued). But the economics cannot beat growth:
+  a trimmed node is MARGINALLY routable (rescue = near-exhaustion,
+  doomed-class search cost; one s6 rescue added +475k pipeline iterations)
+  while growth makes the node EASY (fast search). s8 g=0: 6 rescues, +8%
+  iterations, +3 DRC — REJECTED. s6 g=1 (evict only after the 2x attempt
+  fails): 1 rescue, DRC 96 vs 100, +16% iterations replicated exactly —
+  REJECTED for speed, marginal for quality. s6 bottleneck is PLACEMENT not
+  victims (withoutVictim 0, rejectedPlans 5): doomed nodes sit in congestion
+  hotspots, so their neighbors are dense too. With the g=1 default, s8 is
+  byte-identical (no node reaches a 2x failure); s5/s8 anchors exact with
+  the flag off AND on. Machinery kept flag-off as the proven repair valve
+  for the capacity-model prevention path (the real lever, per 20975dbc).
+  G9: HD-node + A2 parallelism now auto-enables off-benchmark/off-browser
+  (min 8 nodes, hardware/memory gate, explicit env always wins;
+  benchmark.sh pins TS_PARALLEL_HD_NODES=0/TS_PARALLEL_A2=0), with full
+  bookkeeping parity on the parallel path (metadata, solver stats, resize
+  counts, failure stand-ins) and a worker-side success-only intra-node
+  cache (failure-cache poisoning class closed worker-side). Gates: s5
+  anchor 1053687 exact under TS_BENCHMARK=1; s8 sequential 1973601 exact
+  DRC 41; s8 AUTO-ENABLED DRC 41==41, wall 76.3s -> ~50s (load-contaminated,
+  direction-only). 13 new G9 tests + 10 eviction tests; suite green modulo
+  the 2 known upstream-drift failures.
+
 - **2026-07-26 — CONSOLIDATION SESSION (second-opinion review + fixes; full detail in
   REVIEW-2026-07-26.md, RUST-PLAN.md, PR-STAGING.md).** perf-ts-stack rebased onto v0.0.718
   (zero conflicts) and now carries 5 new commits (36c8ce8f, 02cb1895, 1ddd6e00, 7c716eda,
