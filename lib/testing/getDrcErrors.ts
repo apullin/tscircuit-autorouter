@@ -74,6 +74,13 @@ export interface GetDrcErrorsOptions {
    * DrcConnectivityCache); intended for repair candidate scoring.
    */
   connectivityCache?: DrcConnectivityCache
+  /**
+   * Uses this connectivity map instead of building one from the circuit
+   * json. Used by the incremental DRC delta path, which builds the map from
+   * the FULL candidate circuit json (identical net semantics to a full
+   * evaluation) and then runs the checks over a pruned element subset.
+   */
+  prebuiltConnMap?: ConnectivityMap
 }
 
 const cloneNetMap = (
@@ -86,7 +93,7 @@ const cloneNetMap = (
   return cloned
 }
 
-const createDrcConnectivityMap = (
+export const createDrcConnectivityMap = (
   circuitJson: CircuitJson,
   cache?: DrcConnectivityCache,
 ): ConnectivityMap => {
@@ -117,10 +124,9 @@ export const getDrcErrors = (
   // with the high-density-repair03 snapshot counters). Off: dead branches.
   const statsT0 = DRC_EVAL_STATS_ENABLED ? performance.now() : 0
   let statsPrev = statsT0
-  const connMap = createDrcConnectivityMap(
-    circuitJson,
-    options.connectivityCache,
-  )
+  const connMap =
+    options.prebuiltConnMap ??
+    createDrcConnectivityMap(circuitJson, options.connectivityCache)
   if (DRC_EVAL_STATS_ENABLED) {
     noteDrcEval("getDrcErrors")
     const now = performance.now()

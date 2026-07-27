@@ -8,6 +8,7 @@ import { evaluateRelaxedDrc } from "lib/testing/evaluate-relaxed-drc"
 import type { DrcConnectivityCache } from "lib/testing/getDrcErrors"
 import type { CircuitJsonScaffoldCache } from "lib/testing/utils/convertToCircuitJson"
 import type { SimpleRouteJson } from "lib/types"
+import { attachPipeline7DrcDeltaEvaluator } from "./attachPipeline7DrcDeltaEvaluator"
 import {
   convertPipeline7HdRoutesToSimplifiedPcbTraces,
   type ConvertPipeline7HdRoutesOptions,
@@ -36,7 +37,7 @@ export const createPipeline7RelaxedDrcEvaluator = (
     ? {}
     : undefined
 
-  return ({ routes, hdRoutes }) => {
+  const evaluator: DrcEvaluator = ({ routes, hdRoutes }) => {
     const evaluatedRoutes = routes ?? hdRoutes
     if (!evaluatedRoutes) {
       throw new Error("Pipeline7 relaxed DRC evaluation requires HD routes")
@@ -68,4 +69,18 @@ export const createPipeline7RelaxedDrcEvaluator = (
       >[],
     }
   }
+
+  if (scoring && connectivityCache && scaffoldCache) {
+    // Incremental candidate screen (TS_INCREMENTAL_DRC=1; no effect
+    // otherwise — the solver only consults the property behind the flag).
+    // Shares this evaluator's route-invariant caches so the delta path sees
+    // exactly the same connectivity/scaffold state as the full path.
+    attachPipeline7DrcDeltaEvaluator(evaluator, {
+      ...restConversionOptions,
+      connectivityCache,
+      scaffoldCache,
+    })
+  }
+
+  return evaluator
 }

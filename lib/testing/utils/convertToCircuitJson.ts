@@ -382,7 +382,8 @@ const layerNames = new Set<string>([
   "inner8",
 ])
 
-const isLayerName = (layer: string): layer is LayerName => layerNames.has(layer)
+export const isLayerName = (layer: string): layer is LayerName =>
+  layerNames.has(layer)
 
 /**
  * Create pad-like circuit-json elements from SRJ obstacles.
@@ -537,8 +538,14 @@ function createPcbPadElements(srj: SimpleRouteJson): AnyCircuitElement[] {
  * @param routes The routes to extract vias from
  * @param minViaDiameter Default diameter for vias
  * @returns An array of PcbVia elements
+ *
+ * Exported for the incremental DRC delta path, which replicates the base
+ * snapshot's via table (ids, owner traces, geometry, global location dedup)
+ * without rebuilding the whole circuit json. Determinism of the id
+ * numbering and the first-contributor-wins location dedup is part of the
+ * contract.
  */
-function extractViasFromRoutes(
+export function extractViasFromRoutes(
   routes: SimplifiedPcbTrace[] | HighDensityRoute[],
   layerCount: number,
   minViaDiameter = 0.3,
@@ -647,18 +654,19 @@ export type ConvertToCircuitJsonOptions = {
   scaffoldCache?: CircuitJsonScaffoldCache
 }
 
-export function convertToCircuitJson(
+/**
+ * The exact via-diameter resolution convertToCircuitJson applies. Exported
+ * so the incremental DRC delta path replicates via extraction (which feeds
+ * gap arithmetic through hole_diameter) with identical dimensions.
+ */
+export function resolveViaDimensionsForConversion(
   srjWithPointPairs: SimpleRouteJson,
-  routes: SimplifiedPcbTrace[] | HighDensityRoute[],
-  options: ConvertToCircuitJsonOptions = {},
-): AnyCircuitElement[] {
-  const {
-    minTraceWidth = 0.1,
-    minViaDiameter,
-    minViaHoleDiameter,
-    originalSrj,
-    scaffoldCache,
-  } = options
+  options: Pick<
+    ConvertToCircuitJsonOptions,
+    "minViaDiameter" | "minViaHoleDiameter"
+  >,
+): { resolvedMinViaDiameter: number; resolvedMinViaHoleDiameter: number } {
+  const { minViaDiameter, minViaHoleDiameter } = options
   const viaDimensions = getViaDimensions(srjWithPointPairs)
   const resolvedMinViaDiameter = minViaDiameter ?? viaDimensions.padDiameter
   const requestedMinViaHoleDiameter =
@@ -670,6 +678,17 @@ export function convertToCircuitJson(
     (minViaDiameter !== undefined
       ? resolvedMinViaDiameter * 0.5
       : viaDimensions.holeDiameter)
+  return { resolvedMinViaDiameter, resolvedMinViaHoleDiameter }
+}
+
+export function convertToCircuitJson(
+  srjWithPointPairs: SimpleRouteJson,
+  routes: SimplifiedPcbTrace[] | HighDensityRoute[],
+  options: ConvertToCircuitJsonOptions = {},
+): AnyCircuitElement[] {
+  const { minTraceWidth = 0.1, originalSrj, scaffoldCache } = options
+  const { resolvedMinViaDiameter, resolvedMinViaHoleDiameter } =
+    resolveViaDimensionsForConversion(srjWithPointPairs, options)
 
   // Start with empty circuit JSON
   const circuitJson: AnyCircuitElement[] = []
