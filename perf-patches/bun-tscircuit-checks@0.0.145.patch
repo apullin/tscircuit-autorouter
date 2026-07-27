@@ -1,5 +1,5 @@
 diff --git a/dist/index.d.ts b/dist/index.d.ts
-index d79d8c0..50fcd08 100644
+index d79d8c0..c330253 100644
 --- a/dist/index.d.ts
 +++ b/dist/index.d.ts
 @@ -1,12 +1,27 @@
@@ -44,7 +44,7 @@ index d79d8c0..50fcd08 100644
  
  declare function checkTracesAreContiguous(circuitJson: AnyCircuitElement[]): PcbTraceError[];
  
-@@ -68,14 +85,16 @@ declare function checkPadPadClearance(circuitJson: AnyCircuitElement[], { connMa
+@@ -68,16 +85,20 @@ declare function checkPadPadClearance(circuitJson: AnyCircuitElement[], { connMa
      minClearance?: number;
  }): PcbPadPadClearanceError[];
  
@@ -62,9 +62,19 @@ index d79d8c0..50fcd08 100644
 +    segments?: PcbTraceSegment[];
  }): PcbViaTraceClearanceError[];
  
++declare const getTraceSegments: (circuitJson: AnyCircuitElement[]) => PcbTraceSegment[];
++
  /**
+  * Removes generic pcb_trace_error records when a more specific pad-trace or
+  * via-trace clearance error describes the same physical pair.
+@@ -150,4 +171,4 @@ declare function runAllChecks(circuitJson: AnyCircuitElement[]): Promise<(circui
+ 
+ declare function checkConnectorAccessibleOrientation(circuitJson: AnyCircuitElement[]): PcbConnectorNotInAccessibleOrientationWarning[];
+ 
+-export { NetManager, checkAllPinsInComponentAreUnderspecified, checkConnectorAccessibleOrientation, checkDifferentNetViaSpacing, checkEachPcbPortConnectedToPcbTraces, checkEachPcbTraceNonOverlapping, checkNoGroundPinDefined, checkNoPowerPinDefined, checkPadPadClearance, checkPadTraceClearance, checkPcbComponentOverlap, checkPcbComponentsOutOfBoard, checkPcbTracesOutOfBoard, checkPinMustBeConnected, checkSameNetViaSpacing, checkSourceTracesHavePcbTraces, checkSourceTracesMatchPcbTraceThickness, checkTracesAreContiguous, checkViaTraceClearance, checkViasOffBoard, dedupePcbDrcErrors, runAllChecks, runAllNetlistChecks, runAllPinSpecificationChecks, runAllPlacementChecks, runAllRoutingChecks };
++export { NetManager, checkAllPinsInComponentAreUnderspecified, checkConnectorAccessibleOrientation, checkDifferentNetViaSpacing, checkEachPcbPortConnectedToPcbTraces, checkEachPcbTraceNonOverlapping, checkNoGroundPinDefined, checkNoPowerPinDefined, checkPadPadClearance, checkPadTraceClearance, checkPcbComponentOverlap, checkPcbComponentsOutOfBoard, checkPcbTracesOutOfBoard, checkPinMustBeConnected, checkSameNetViaSpacing, checkSourceTracesHavePcbTraces, checkSourceTracesMatchPcbTraceThickness, checkTracesAreContiguous, checkViaTraceClearance, checkViasOffBoard, dedupePcbDrcErrors, getTraceSegments, runAllChecks, runAllNetlistChecks, runAllPinSpecificationChecks, runAllPlacementChecks, runAllRoutingChecks };
 diff --git a/dist/index.js b/dist/index.js
-index 9fd9376..d1e17fd 100644
+index 9fd9376..ad19244 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -330,7 +330,9 @@ var addStartAndEndPortIdsIfMissing = (soup) => {
@@ -561,6 +571,14 @@ index 9fd9376..d1e17fd 100644
      ...checkTracesAreContiguous(circuitJson),
      ...checkPcbTracesOutOfBoard(circuitJson)
    ];
+@@ -3152,6 +3259,7 @@ export {
+   checkViaTraceClearance,
+   checkViasOffBoard,
+   dedupePcbDrcErrors,
++  getTraceSegments,
+   runAllChecks,
+   runAllNetlistChecks,
+   runAllPinSpecificationChecks,
 diff --git a/dist/index.js.map b/dist/index.js.map
 index a013616..c62e31b 100644
 --- a/dist/index.js.map
