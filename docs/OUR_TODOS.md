@@ -170,6 +170,16 @@ perf-artifacts/kernel-inventory.md (accelerator analysis).
       into ~/.bun/install/cache and across worktrees. NEVER edit node_modules in place: apply changes via
       `patch` (replaces file, breaks link) or rm+cp first. Round 3 hit this: npm-package edits leaked into
       the cache + 6 worktrees; restored via /tmp/checks-r3 orig snapshots + GH cache copies.
+- [!] **F7. ANCHOR TRAP (since G9 auto-enable, 2026-07-27): bare probe runs are NONDETERMINISTIC** —
+      auto parallel HD solving kicks in with env unset (s5 lands in a 1026915-1027001 band).
+      Every identity/anchor check MUST pin TS_BENCHMARK=1 or TS_PARALLEL_HD_NODES=0
+      TS_PARALLEL_A2=0. Anchors: s5 1053687/DRC 0, s8 1973601/DRC 41.
+- [!] **F8. LOCKFILE TRAP: no lockfile in the repo** — a fresh `bun install` resolves newer deps
+      (e.g. @tscircuit/eval 1050→1072) and SHIFTS ITERATION COUNTS even with all perf-patches
+      applied. Anchors only reproduce on the frozen node_modules lineage. New worktrees:
+      `cp -a ~/personal/awt-ts2/node_modules <worktree>/` instead of bun install (patches
+      already applied there; verify the last patch of each chain reverse-applies cleanly).
+      (Some fresh installs DO still reproduce — resolution-timing dependent; always verify.)
 
 ## G. Round 5 frontier (2026-07-26, from the second-opinion review — see REVIEW-2026-07-26.md)
 
@@ -230,9 +240,12 @@ perf-artifacts/kernel-inventory.md (accelerator analysis).
       2026-07-27): runtime-adaptive layer, Bun path unchanged; node smoke already passed
       s8 HD=2+A2 at DRC 41 == sequential, 63.5s vs ~100s seq-node. Merge gate: G9 tests
       green under bun + anchors exact + node smoke parity. Web-worker (browser) layer still open.
-- [ ] **G8. Growth-ladder corpus gate.** GROWTH_SCHEDULE="1.2,2,4,8" (exp/rewrites f354b3c2, NOT
-      landed on the stack) moved s8 to 133s/31 DRC and s6 to 344s/98 vs 123s/45 and 268s/99 —
-      a real quality/speed trade needing a full two-corpus gate as its own experiment.
+- [x] **G8. Growth-ladder corpus gate — GATED 2026-07-27, NEGATIVE as default (dc6ffe4c,
+      WINS.md entry).** srj18 ×16: wall +24%, DRC 558→577 net WORSE (s8 −17, s15 +35).
+      Mechanism attributed: extra rung displaces the 8x rung under the attempts cap (cap-4
+      probe restores s15 to exactly 90; s8/s13 bit-identical at either cap). Best case DRC −3%
+      @ +24% wall — dominated by qualityMode. Env hooks landed default-off: TS_GROWTH_SCHEDULE
+      + TS_MAX_GROWTH_ATTEMPTS. Only future use: per-board adaptive quality policy (s8-class).
 - [x] **G9. HD-node + A2 parallelism productization — LANDED (2026-07-27, 42d12713 +
       83f46ea8).** Auto-enable off-benchmark/off-browser with hardware/memory +
       board-size gates; explicit env always wins; benchmark.sh pins both flags

@@ -5,6 +5,46 @@ perf-audit-2026-07-23.md. Baselines: main @ v0.0.714 (b7b243cc), 64-thread x86, 
 
 ## Confirmed
 
+- **2026-07-27 (late) — TRACE-SIMPLIFICATION SHARED INDEXES landed (merge 2ac2b6a2),
+  result-identical.** SingleSimplifiedPathSolver5_Deg45's constructor scans (segment
+  O(routes²·segs) + the REAL hot spot, the obstacle filter: 1909ms of the 3.2s stage
+  on s8) replaced by two flatbush indexes built once per Multi run, with proofs that
+  query bounds exactly reproduce the old rejects (inclusive-bounds vs strict-<,
+  Euclidean-gap superset) and hit lists restore original order + object identity.
+  Stage wall s8 3.18s → 1.18s; board ~2.7%. Anchors exact, capture byte-identical,
+  11/12 stage tests pass (1 pre-existing skip). NEGATIVE half (measured, do not
+  retry): dirty-tracking across the 2 outer loops is unsound-by-default — re-
+  simplification is NOT idempotent (s8 loop-2: via passes changed 3/361 routes but
+  baseline still re-simplified 247/361), and the honest interaction closure has ZERO
+  corpus coverage (dense boards are one component → 3-6 seeds dirty everything).
+  Kept as TS_SIMP_DIRTY=1 flag, default OFF.
+
+- **2026-07-27 (late) — DRC PHASE 0 landed (merge 4be1dece): TS_DRC_EVAL_STATS
+  instrumentation + P0 duplicate-snapshot elimination + O(C×R) conversion fix, all
+  result-identical** (anchors + byte-identical outputs at each commit; regenerated
+  bun-high-density-repair03.patch round-trips from pristine; shared node_modules
+  lineage synced hardlink-safely). Instrumentation answers the design-doc probes
+  (perf-artifacts/incremental-drc-design.md): Q1 — s8 stage-2 = 105 full evals
+  (force 63, sweep 40, 2 boundary), s12 = 94; detour/terminal-via/layer-move = 0.
+  Q2 — the five checks are 92-94% of per-eval time (s12: traceOverlap 42.6%,
+  padTrace 41.1%, viaTrace 12.1%); conversions 3-6% → **D3 dead by kill criterion;
+  D1's neighborhood pruning attacks the dominant term.** Bonus: getConnMapAwareSrj
+  is route-invariant but rebuilt per snapshot (~10% of snapshot cost) — free D1
+  cache. Q3 — stage-1 (nested UNPATCHED checks@0.0.123) is 3.3% (s8) / 7.2% (s12)
+  of total wall, 90% in its internal evals → separate fix candidate. P0 timing:
+  stage −1.4%/−5.1% (s8/s12), kill criterion not triggered.
+
+- **2026-07-27 (late) — G8 GROWTH-LADDER CORPUS GATE: NEGATIVE as default, mechanism
+  fully attributed (dc6ffe4c; raw agg-2026-07-27/g8*.jsonl).** srj18 ×16 seq,
+  ladder "1.2,2,4,8" @ cap 3 (= 1.2→2→4): wall +24%, DRC 558→577 NET WORSE.
+  s8 −17 (41→24, the one big win: its over-committed nodes route legally at 1.2x)
+  but s15 +35 (90→125). Mechanism proven by the cap-4 probe: the extra legal rung
+  DISPLACES the 8x rung — cap 4 restores s15 to exactly 90 while s8/s13 are
+  bit-identical at either cap (they never reach rung 4). Best case (cap 4): DRC −3%
+  for +24% wall — strictly dominated by qualityMode (−35% @ +80%) per wall-point.
+  Env hooks kept (TS_GROWTH_SCHEDULE, TS_MAX_GROWTH_ATTEMPTS), defaults untouched,
+  anchors exact. Candidate ingredient for per-board adaptive quality policy only.
+
 - **2026-07-27 (late) — G7 RUNTIME A/B (node/V8 vs bun/JSC), sequential path, srj18
   s5+s8, interleaved 2x pairs.** Raw: awt-perf-stack
   perf-artifacts/agg-2026-07-27/g7-runtime-ab.jsonl. Walls (mean):
