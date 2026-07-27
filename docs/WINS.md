@@ -28,8 +28,15 @@ perf-audit-2026-07-23.md. Baselines: main @ v0.0.714 (b7b243cc), 64-thread x86, 
   interleaved — 16/16 boards bit-exact (iterations + DRC), wall 1389s → 1328s
   = 1.046x, no board slower. Tier-1 identity now covers all 5 boards (s10
   2.2x stage, s6 100-error full verify run clean). Checks phase-2 dist ADOPTED
-  in the same commit (anchors exact post-swap). Default-on blocked only on a
-  via-in-pad-class verify probe (hunt running on dataset01 via TS_DRC_EVAL_STATS).**
+  in the same commit (anchors exact post-swap).
+  **DEFAULT FLIPPED ON (b3b724c0): TS_INCREMENTAL_DRC now defaults on;
+  =0 restores the full-eval path.** Final gate items: dataset01 s14 exercised
+  the detour class live (verify clean); via-in-pad/layer-move/terminal-via
+  have ZERO volume in any available corpus (60-board instrumented sweep:
+  dataset01 ×30, srj19/20/16 ×10 each) — same generic seam, verify canary
+  documented in the flag header. Post-flip: anchors EXACT default-on, s5
+  output byte-identical on-vs-off, repair03 patch regenerated round-trip
+  clean. s8 stage-2 same-session: 9.16 → 5.77s.**
 
 - **2026-07-27 (late) — NODE worker_threads PARALLELISM landed (merge 8904d3ac, G7b):
   Node users now get the parallel stack.** Thin runtime shim (lib/parallel/runtime.ts,
