@@ -236,10 +236,12 @@ perf-artifacts/kernel-inventory.md (accelerator analysis).
       NONDETERMINISTIC (base s8 forks on Math.hypot: DRC 45 bun vs 41 node); the stack's
       hypot→sqrt makes results engine-stable — upstream ammo. Browser leg not run (V8
       numbers proxy Chrome; Safari=JSC ~ bun numbers).
-- [ ] **G7b. lib/parallel node worker_threads port** — IN FLIGHT (agent, feat/node-parallel,
-      2026-07-27): runtime-adaptive layer, Bun path unchanged; node smoke already passed
-      s8 HD=2+A2 at DRC 41 == sequential, 63.5s vs ~100s seq-node. Merge gate: G9 tests
-      green under bun + anchors exact + node smoke parity. Web-worker (browser) layer still open.
+- [x] **G7b. lib/parallel node worker_threads port — LANDED (merge 8904d3ac, 2026-07-27).**
+      Runtime shim + lazily prebundled worker entries + nodeWorkerSupport() auto-gate.
+      Merged-stack verification: bun anchors EXACT, 13/13 parallel tests, node smoke PASS
+      (s8 seq 96.4s → HD=2 63.1s, DRC 41=41, 1211/1211 node statuses). Still open:
+      web-worker (browser) layer; dist-published worker bundles so npm consumers (not
+      just repo checkouts) can go parallel under node.
 - [x] **G8. Growth-ladder corpus gate — GATED 2026-07-27, NEGATIVE as default (dc6ffe4c,
       WINS.md entry).** srj18 ×16: wall +24%, DRC 558→577 net WORSE (s8 −17, s15 +35).
       Mechanism attributed: extra rung displaces the 8x rung under the attempts cap (cap-4

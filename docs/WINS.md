@@ -5,6 +5,30 @@ perf-audit-2026-07-23.md. Baselines: main @ v0.0.714 (b7b243cc), 64-thread x86, 
 
 ## Confirmed
 
+- **2026-07-27 (late) — NODE worker_threads PARALLELISM landed (merge 8904d3ac, G7b):
+  Node users now get the parallel stack.** Thin runtime shim (lib/parallel/runtime.ts,
+  Bun branch verbatim); worker entries prebundled lazily (node refuses node_modules TS +
+  extensionless imports; native/ stubbed — top-level bun:ffi made bundles unloadable);
+  auto-enable gains nodeWorkerSupport() so auto never enables a pool whose creation would
+  throw (dist-only consumers stay sequential, safe). Verified on the merged stack: bun
+  anchors EXACT, 13/13 parallel tests, tsc clean, node smoke PASS — s5 parity 553/553
+  node statuses + DRC 0=0; **s8 node seq 96.4s → HD=2 63.1s (1.53x), DRC 41=41,
+  1211/1211 statuses equal; A2 dispatches under worker_threads.** With G7a's engine
+  numbers: node users' full journey = base-node 321.8s → stack-node-parallel ~63s ≈ 5x.
+
+- **2026-07-27 (late) — DEPENDENCY WORKBENCH: hot-dep repos cloned; checks build proven
+  byte-reproducible.** Clones: ~/personal/{tscircuit-checks,tiny-hypergraph,
+  high-density-repair03,high-density-a01}. @tscircuit/checks v0.0.145 (tag 7fc8d0f)
+  builds dist/index.js BYTE-IDENTICAL to the published npm tarball → source-level work
+  on the 92-94% DRC-eval seam is now verifiable end-to-end. tiny-hypergraph 6-patch
+  chain converted to a real commit series (perf/stack-chain, cf16f23..24ad8ab),
+  byte-verified vs the deployed node_modules; package suite base 97/0 → chain 99/0
+  (our r2 patch adds+fixes heap tests). Folklore corrected: the "9 pre-existing env
+  fails" were an artifact of running the suite from node_modules context — the real
+  repo is green. Bisect note: intermediate commits 4-5 have 1 failing heap test
+  (fixed by commit 6) — fold the test fix into commit 4 if upstreaming. LOCAL ONLY:
+  nothing pushed to any fork; wiring the autorouter to fork refs awaits user's go.
+
 - **2026-07-27 (late) — TRACE-SIMPLIFICATION SHARED INDEXES landed (merge 2ac2b6a2),
   result-identical.** SingleSimplifiedPathSolver5_Deg45's constructor scans (segment
   O(routes²·segs) + the REAL hot spot, the obstacle filter: 1909ms of the 3.2s stage
