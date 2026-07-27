@@ -113,3 +113,23 @@ speedup curves to beat. Keep TT exploratory until §1's gates report.
   hash-identical, ≤24/70 dispatch on 60% of nodes) is the one arithmetic that still
   works: ~9x → ~2-3x work × 8 threads × 1.4 kernel ≈ 4x. It is a fifth experiment,
   not a default.
+
+## FINAL MEASUREMENT (2026-07-27, sequential native mode b8652bfc)
+
+Schedule-identical sequential A/B (the clean kernel comparison): native-seq is
+QUALITY-EXACT (s8 DRC 41=41, s5 0=0) and 1.58-1.73x SLOWER than TS - the Rust
+engine runs this workload at ~0.6x of bun/JSC. The Gate-B-era "1.4x faster
+per unit work" was an artifact of an assumed thread efficiency. Third
+independent confirmation JSC wins on this code (A01 wash, run-to-completion
+loss, schedule-identical loss): the campaign's own JIT-friendliness rounds
+(hidden classes, SoA pools, numeric keys) removed the headroom a native port
+would have exploited. Stage-2-threads arithmetic re-done with the measured
+kernel: 8 threads / ~2.5x early-exit work x 0.6 ≈ 1.9x theoretical - now
+resting entirely on an unproven work-reduction estimate, against four
+consecutive negative parallel results. RECOMMENDATION: do not build stage-2;
+the Rust chapter closes with a bit-exact mirror + parity harness as the
+permanent artifacts. The living speed frontier remains TS-side: HD-node
+workers (landed, 1.5-1.8x), G6 eviction+re-path, upstream PRs. This also
+answers Tenstorrent: if zero-transport native threads lose to the JS
+scheduler on this hardware, an accelerator port is not the next move -
+algorithmic work (G6) is.
