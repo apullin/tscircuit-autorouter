@@ -15,6 +15,8 @@
  * result.
  */
 
+import { resolveHdNodeParallelism } from "./autoEnable"
+
 const RESULT_SAB_BYTES = 8 * 1024 * 1024
 const STATUS_OFFSET = 0
 const LENGTH_OFFSET = 1
@@ -27,6 +29,14 @@ export type HdNodeResult = {
   error: string | null
   routes: any[]
   stats: Record<string, unknown>
+  /** Bookkeeping parity fields, computed worker-side (see hdNodeWorker). */
+  iterations: number
+  solverType: string
+  routeCount: number
+  growthAttempts: number
+  /** Per-task deltas of the worker's private intra-node cache counters. */
+  cacheHits: number
+  cacheMisses: number
 }
 
 type PoolWorker = {
@@ -37,11 +47,14 @@ type PoolWorker = {
   fatal: Error | null
 }
 
-export const parallelHdNodesEnabled = (): number => {
-  if (typeof process === "undefined") return 0
-  const n = Number(process.env.TS_PARALLEL_HD_NODES ?? 0) || 0
-  return n > 0 ? Math.min(32, n) : 0
-}
+/**
+ * Resolved worker count for the node-parallel HD path, 0 = sequential.
+ * Explicit TS_PARALLEL_HD_NODES always wins; when unset, the G9 auto-enable
+ * policy decides (see autoEnable.ts). HighDensitySolver additionally gates
+ * auto mode on board size at dispatch time.
+ */
+export const parallelHdNodesEnabled = (): number =>
+  resolveHdNodeParallelism().workerCount
 
 export class HdNodePool {
   private workers: PoolWorker[] = []
@@ -146,6 +159,12 @@ export class HdNodePool {
         error: payload?.error ?? null,
         routes: payload?.routes ?? [],
         stats: payload?.stats ?? {},
+        iterations: payload?.iterations ?? 0,
+        solverType: payload?.solverType ?? "unknown",
+        routeCount: payload?.routeCount ?? payload?.routes?.length ?? 0,
+        growthAttempts: payload?.growthAttempts ?? 0,
+        cacheHits: payload?.cacheHits ?? 0,
+        cacheMisses: payload?.cacheMisses ?? 0,
       })
       w.busyWith = null
       Atomics.store(w.header, STATUS_OFFSET, 0)

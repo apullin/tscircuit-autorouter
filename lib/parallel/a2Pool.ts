@@ -10,6 +10,8 @@
  * reusing that worker would let a stale write be served as a later call's
  * result (observed failure mode: board N's routes returned for board N+1).
  */
+import { resolveA2Parallelism } from "./autoEnable"
+
 const RESULT_SAB_BYTES = 64 * 1024 * 1024
 const STATUS_OFFSET = 0
 const LENGTH_OFFSET = 1
@@ -136,7 +138,9 @@ export const runA2Branches = (tasks: {
   }
 }
 
-export const parallelA2Enabled = (): boolean =>
-  typeof process !== "undefined" &&
-  !!process.env.TS_PARALLEL_A2 &&
-  process.env.TS_PARALLEL_A2 !== "0"
+/**
+ * Explicit TS_PARALLEL_A2 always wins; when unset, the G9 auto-enable policy
+ * decides (see autoEnable.ts — off in browser, benchmark/CI/test contexts,
+ * and on hardware with < 8 threads or < 4GB free).
+ */
+export const parallelA2Enabled = (): boolean => resolveA2Parallelism().enabled
