@@ -1,6 +1,6 @@
 diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats.ts b/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats.ts
 --- a/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats.ts	1970-01-01 00:00:00.000000000 +0000
-+++ b/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats.ts	2026-07-27 19:31:57.994065125 +0000
++++ b/lib/solvers/GlobalDrcForceImproveSolver/drcEvalStats.ts	2026-07-27 22:11:16.228189633 +0000
 @@ -0,0 +1,52 @@
 +/**
 + * Env-gated DRC evaluation instrumentation (TS_DRC_EVAL_STATS=1).
@@ -55,8 +55,8 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
 +  ),
 +})
 diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolver.ts b/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolver.ts
---- a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolver.ts	2026-07-27 18:47:02.703569216 +0000
-+++ b/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolver.ts	2026-07-27 19:31:57.994196763 +0000
+--- a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolver.ts	2026-07-27 22:11:16.223007905 +0000
++++ b/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcBranchPortfolioSolver.ts	2026-07-27 22:11:16.228230701 +0000
 @@ -3,6 +3,7 @@
  import type { HighDensityRoute } from "../../types/high-density-types"
  import { GlobalDrcForceImproveSolver } from "./GlobalDrcForceImproveSolver"
@@ -239,8 +239,8 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
          viaInPadRoutes,
          viaInPadSnapshot,
 diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts b/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts
---- a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts	2026-07-27 18:47:02.703569216 +0000
-+++ b/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts	2026-07-27 20:17:08.884707989 +0000
+--- a/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts	2026-07-27 22:11:16.223078979 +0000
++++ b/lib/solvers/GlobalDrcForceImproveSolver/GlobalDrcForceImproveSolver.ts	2026-07-27 22:11:16.228282779 +0000
 @@ -1,6 +1,7 @@
  import { BaseSolver } from "../BaseSolver"
  import type { ConnectivityMap } from "circuit-json-to-connectivity-map"
@@ -798,8 +798,8 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
    }
 diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolver/incrementalDrc.ts b/lib/solvers/GlobalDrcForceImproveSolver/incrementalDrc.ts
 --- a/lib/solvers/GlobalDrcForceImproveSolver/incrementalDrc.ts	1970-01-01 00:00:00.000000000 +0000
-+++ b/lib/solvers/GlobalDrcForceImproveSolver/incrementalDrc.ts	2026-07-27 20:16:22.892249527 +0000
-@@ -0,0 +1,39 @@
++++ b/lib/solvers/GlobalDrcForceImproveSolver/incrementalDrc.ts	2026-07-27 22:11:16.228367058 +0000
+@@ -0,0 +1,41 @@
 +/**
 + * Env flags for incremental (delta) DRC candidate evaluation — design doc
 + * perf-artifacts/incremental-drc-design.md §3 D1.
@@ -811,9 +811,11 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
 + *   neighborhoods. Candidates that pass the screen trigger ONE full snapshot
 + *   before acceptance (the full snapshot stays the authority for the actual
 + *   accept decision and becomes the new comparison base, preserving error
-+ *   ordering for the targeting cursors). Default OFF: with the flag unset
-+ *   every code path below is a dead branch and behavior is byte-identical
-+ *   to before.
++ *   ordering for the targeting cursors). Default ON since 2026-07-27 (corpus
++ *   gate: srj18 x16 bit-exact at 1.046x, no board slower; force/sweep/detour
++ *   classes verify-proven; via-in-pad/layer-move/terminal-via had zero volume
++ *   in any available corpus - same seam, verify canary available). Set
++ *   TS_INCREMENTAL_DRC=0 for the pre-D1 full-eval path.
 + *
 + * TS_INCREMENTAL_DRC_VERIFY=1 (requires TS_INCREMENTAL_DRC=1)
 + *   Computes BOTH the delta aggregates and the full snapshot per screened
@@ -823,7 +825,7 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
 + *   makes exactly the same accept/reject choices as a flag-off run.
 + */
 +export const INCREMENTAL_DRC_ENABLED =
-+  typeof process !== "undefined" && process.env?.TS_INCREMENTAL_DRC === "1"
++  typeof process === "undefined" || process.env?.TS_INCREMENTAL_DRC !== "0"
 +
 +export const INCREMENTAL_DRC_VERIFY =
 +  INCREMENTAL_DRC_ENABLED &&
@@ -840,8 +842,8 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
 + */
 +export const INCREMENTAL_DRC_SCORE_NOISE_TOLERANCE = 1e-6
 diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts b/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts
---- a/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts	2026-07-27 18:47:02.703569216 +0000
-+++ b/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts	2026-07-27 20:07:46.846606352 +0000
+--- a/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts	2026-07-27 22:11:16.223290237 +0000
++++ b/lib/solvers/GlobalDrcForceImproveSolver/netUtils.ts	2026-07-27 22:11:16.228005907 +0000
 @@ -13,13 +13,46 @@
    return connMap.getNetConnectedToId(id)
  }
@@ -957,8 +959,8 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
    rootConnectionName: string,
    obstacle: SimpleRouteJson["obstacles"][number],
 diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts b/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts
---- a/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts	2026-07-27 18:47:02.740569499 +0000
-+++ b/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts	2026-07-27 20:17:08.882071202 +0000
+--- a/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts	2026-07-27 22:11:16.223402197 +0000
++++ b/lib/solvers/GlobalDrcForceImproveSolver/solverHelpers.ts	2026-07-27 22:11:16.228088012 +0000
 @@ -3,10 +3,21 @@
    segmentToSegmentMinDistance,
  } from "@tscircuit/math-utils"
@@ -1423,8 +1425,8 @@ diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolv
 +  return { snapshot, viaIssueCount: getViaDrcIssueCount(snapshot) }
 +}
 diff -x node_modules -ruN '--exclude=.*' a/lib/solvers/GlobalDrcForceImproveSolver/types.ts b/lib/solvers/GlobalDrcForceImproveSolver/types.ts
---- a/lib/solvers/GlobalDrcForceImproveSolver/types.ts	2026-07-27 18:47:02.740569499 +0000
-+++ b/lib/solvers/GlobalDrcForceImproveSolver/types.ts	2026-07-27 20:17:08.879235972 +0000
+--- a/lib/solvers/GlobalDrcForceImproveSolver/types.ts	2026-07-27 22:11:16.223569763 +0000
++++ b/lib/solvers/GlobalDrcForceImproveSolver/types.ts	2026-07-27 22:11:16.228334446 +0000
 @@ -4,13 +4,53 @@
  
  export type DrcError = Record<string, unknown>
