@@ -5,6 +5,29 @@ perf-audit-2026-07-23.md. Baselines: main @ v0.0.714 (b7b243cc), 64-thread x86, 
 
 ## Confirmed
 
+- **2026-07-27 (late) — G7 RUNTIME A/B (node/V8 vs bun/JSC), sequential path, srj18
+  s5+s8, interleaved 2x pairs.** Raw: awt-perf-stack
+  perf-artifacts/agg-2026-07-27/g7-runtime-ab.jsonl. Walls (mean):
+  stack s5 bun 20.0 / node 21.9; stack s8 bun 78.1 / node 100.0;
+  base718 s5 bun 34.5 / node 43.6; base718 s8 bun 330.8 / node 321.8*.
+  (a) **node is 1.09-1.28x slower than bun on the stack — no V8 pathology,
+  priorities unchanged; JSC stays the benchmark runtime.** Bundling control
+  passed (bun-target bundle 19.0 vs TS entry 20.0 on s5; node legs ran a
+  node-target bundle, so node numbers are if anything ~5% flattered).
+  (b) **The stack helps node users MORE than bun users**: s5 sequential
+  speedup 1.99x under node vs 1.72x under bun — the alloc cuts + hypot→sqrt
+  remove exactly what V8 handles worst. s8 node speedup 3.22x sequential.
+  (c) **PORTABILITY FINDING: upstream v0.0.718 is engine-nondeterministic.**
+  *base s8 solves a DIFFERENT search on each engine (bun 2.11M iters / DRC 45
+  vs node 1.97M / DRC 41 — Math.hypot rounding forks A* tie-breaks; V8's
+  hypot evidently behaves like our sqrt swap, JSC's does not), so its two
+  walls are not comparable. The STACK is engine-stable: s5 bit-identical
+  across engines (1053687 both), s8 within 47 iterations with DRC 41 == 41
+  (one deliberate hypot remains, selective-rerip :455). hypot→sqrt is a
+  speed win AND a cross-engine determinism/quality fix — upstream-PR ammo.
+  (d) Remaining node gap is parallelism: lib/parallel is Bun-only; the
+  worker_threads port (in flight) already smoke-tested s8 at DRC 41 == seq.
+
 - **2026-07-27 (night) — AGGREGATE vs TOP-OF-TREE MEASURED: ~4x (lower bound).**
   Baseline = upstream v0.0.718 (origin/main tip = the stack's exact base,
   pristine temp worktree) vs perf-ts-stack productized default (auto HD

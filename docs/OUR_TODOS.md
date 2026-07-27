@@ -220,10 +220,16 @@ perf-artifacts/kernel-inventory.md (accelerator analysis).
       too — cmn_166 doomed at pf 0.000). Shipped: `qualityMode` pipeline opt.
       Follow-ups: region-count-scaled pathing budgets (s15 class); upstream
       note about the dead opts.
-- [ ] **G7. Runtime A/B: node/V8 (and browser) vs bun/JSC.** Every campaign number is bun/JSC;
-      downstream users run Node and browsers. One A/B of the published dist under node vs bun on
-      samples 5/8 could reshuffle priorities (megamorphic solver code JITs very differently).
-      lib/parallel/* is Bun-API-only — needs a node/web-worker port before users benefit from A2/HD-nodes.
+- [x] **G7a. Runtime A/B: node/V8 vs bun/JSC — MEASURED 2026-07-27 (WINS.md entry).**
+      node 1.09-1.28x slower on the stack; NO priority reshuffle; stack speedup is BIGGER
+      for node users (s5 1.99x vs bun 1.72x). Bonus finding: upstream is engine-
+      NONDETERMINISTIC (base s8 forks on Math.hypot: DRC 45 bun vs 41 node); the stack's
+      hypot→sqrt makes results engine-stable — upstream ammo. Browser leg not run (V8
+      numbers proxy Chrome; Safari=JSC ~ bun numbers).
+- [ ] **G7b. lib/parallel node worker_threads port** — IN FLIGHT (agent, feat/node-parallel,
+      2026-07-27): runtime-adaptive layer, Bun path unchanged; node smoke already passed
+      s8 HD=2+A2 at DRC 41 == sequential, 63.5s vs ~100s seq-node. Merge gate: G9 tests
+      green under bun + anchors exact + node smoke parity. Web-worker (browser) layer still open.
 - [ ] **G8. Growth-ladder corpus gate.** GROWTH_SCHEDULE="1.2,2,4,8" (exp/rewrites f354b3c2, NOT
       landed on the stack) moved s8 to 133s/31 DRC and s6 to 344s/98 vs 123s/45 and 268s/99 —
       a real quality/speed trade needing a full two-corpus gate as its own experiment.
