@@ -20,7 +20,17 @@ perf-audit-2026-07-23.md. Baselines: main @ v0.0.714 (b7b243cc), 64-thread x86, 
   byte-reproducible.** Clones: ~/personal/{tscircuit-checks,tiny-hypergraph,
   high-density-repair03,high-density-a01}. @tscircuit/checks v0.0.145 (tag 7fc8d0f)
   builds dist/index.js BYTE-IDENTICAL to the published npm tarball → source-level work
-  on the 92-94% DRC-eval seam is now verifiable end-to-end. tiny-hypergraph 6-patch
+  on the 92-94% DRC-eval seam is now verifiable end-to-end. **Dist patch PORTED TO
+  SOURCE (perf/source-port-v145, a3aa3f2): rebuilt dist sha256-matches the deployed
+  patched dist exactly**; checks suite 130/130 after making a partial connMap test
+  stub interface-complete (the patched path calls getNetConnectedToId — latent
+  requirement now explicit). esbuild newline-preservation quirks documented (3 sites
+  must keep biome-nonconforming breaks for byte-identity). Structural map of the 5
+  hot checks delivered → phase-2 targets: runAllRoutingChecks builds FIVE separate
+  connMaps + re-extracts segments 3x per eval (share them); checkPadTraceClearance
+  per-pair connMap calls (hoist); both via-spacing checks O(n²) with upstream TODO
+  "use flatbush"; SpatialObjectIndex spread-copies every insert. Phase-2 agent
+  running with byte-stable-order + downstream-anchor gates. tiny-hypergraph 6-patch
   chain converted to a real commit series (perf/stack-chain, cf16f23..24ad8ab),
   byte-verified vs the deployed node_modules; package suite base 97/0 → chain 99/0
   (our r2 patch adds+fixes heap tests). Folklore corrected: the "9 pre-existing env
