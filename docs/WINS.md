@@ -72,7 +72,14 @@ perf-audit-2026-07-23.md. Baselines: main @ v0.0.714 (b7b243cc), 64-thread x86, 
   documented in code. Downstream stage gain modest so far (10.02→9.73s s8)
   because lib/testing/getDrcErrors.ts calls checks individually — follow-up:
   thread the new `segments` option there (kills a 3x extraction per eval).
-  Adoption into the stack queued behind the running D1 corpus gate.** tiny-hypergraph 6-patch
+  Adoption into the stack queued behind the running D1 corpus gate.**
+  **Phase-2b + segments threading LANDED (ea285b01/09b2083b): getTraceSegments
+  exported as public checks API (+20 bytes dist), getDrcErrors extracts once
+  per eval and passes to all three segment checks — automatically correct on
+  full AND pruned (D1) inputs; all gates pass incl. verify-mode s8 zero
+  mismatches. Timing NEUTRAL with D1 default-on (within noise) — recorded
+  honestly; value is structural + on the full-eval path (D1-off / upstream,
+  which has no D1). This closes the entire 2026-07-27 work queue.** tiny-hypergraph 6-patch
   chain converted to a real commit series (perf/stack-chain, cf16f23..24ad8ab),
   byte-verified vs the deployed node_modules; package suite base 97/0 → chain 99/0
   (our r2 patch adds+fixes heap tests). Folklore corrected: the "9 pre-existing env
