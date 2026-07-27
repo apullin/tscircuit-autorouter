@@ -23,10 +23,22 @@ const getArg = (name: string, fallback: string) => {
 }
 const dataset: DatasetName = parseDatasetName(getArg("dataset", "srj18"))!
 const sample = Number(getArg("sample", "8"))
+const targetMinCapacityArg = getArg("target-min-capacity", "")
+const maxNodeDimensionArg = getArg("max-node-dimension", "")
+const opts: {
+  targetMinCapacity?: number
+  maxNodeDimension?: number
+  effort?: number
+} = {}
+if (targetMinCapacityArg) opts.targetMinCapacity = Number(targetMinCapacityArg)
+if (maxNodeDimensionArg) opts.maxNodeDimension = Number(maxNodeDimensionArg)
+const effortArg = getArg("effort", "")
+if (effortArg) opts.effort = Number(effortArg)
 
 const { scenario } = await loadScenarioBySampleNumber(dataset, sample)
 const pipeline = new AutoroutingPipelineSolver7_MultiGraph(
   structuredClone(scenario),
+  Object.keys(opts).length > 0 ? opts : undefined,
 )
 
 const t0 = Date.now()
@@ -56,6 +68,14 @@ if (pipeline.solved && !pipeline.failed) {
   drcErrors = String(drc.errors.length)
 }
 
+const hdStats = pipeline.highDensityRouteSolver?.stats as
+  | Record<string, unknown>
+  | undefined
+const meshNodeCount =
+  pipeline.highDensityNodePortPoints?.length ??
+  pipeline.uniformPortDistributionSolver?.getOutput().length ??
+  null
+
 console.log(
   JSON.stringify(
     {
@@ -63,10 +83,24 @@ console.log(
       sample,
       solved: pipeline.solved,
       failed: pipeline.failed,
+      error: pipeline.failed ? (pipeline.error ?? null) : null,
+      failedStage: pipeline.failed
+        ? pipeline.pipelineDef[pipeline.currentPipelineStepIndex]?.solverName
+        : null,
       iterations: pipeline.iterations,
       wallS: +wallS.toFixed(1),
       drcErrors,
       evictRepath: process.env.TS_EVICT_REPATH ?? "0",
+      targetMinCapacity: opts.targetMinCapacity ?? 0.5,
+      maxNodeDimension: opts.maxNodeDimension ?? 16,
+      effort: opts.effort ?? 1,
+      capacityDepth: (pipeline as { opts?: { capacityDepth?: number } }).opts
+        ?.capacityDepth,
+      meshNodeCount,
+      highDensityResizeCount: hdStats?.highDensityResizeCount ?? null,
+      hdStageWallS: pipeline.timeSpentOnPhase?.highDensityRouteSolver
+        ? +(pipeline.timeSpentOnPhase.highDensityRouteSolver / 1000).toFixed(1)
+        : null,
       evictionStats: evictionStats
         ? {
             applied: evictionStats.evictionsApplied,
