@@ -39,11 +39,22 @@ rm+cp also works. Never edit in place.
 
 ## Contents (all verified result-identical unless noted)
 
-- bun-tscircuit-checks@0.0.145.patch — checkViaTraceClearance spatial index
-  (copied sibling pattern, ~8-9x micro), net-id lookup hoisting in
-  checkEachPcbTraceNonOverlapping + via spacing checks, duplicate closest-point
-  removal in getTraceObstacleClearance. Verified: 300 random seeds byte-identical
-  error JSON.
+- bun-tscircuit-checks@0.0.145.patch — REGENERATED 2026-07-27 from the source
+  clone ~/personal/tscircuit-checks branch perf/checks-phase2 (build is
+  byte-reproducible: pristine v0.0.145 tag rebuilds the published dist exactly;
+  this patch = pristine dist -> phase-2 build of dist/{index.js,index.d.ts,
+  index.js.map}). Contains the original round-3 wins (checkViaTraceClearance
+  spatial index, net-id hoisting in checkEachPcbTraceNonOverlapping + via
+  spacing checks, duplicate closest-point removal in getTraceObstacleClearance;
+  verified then: 300 random seeds byte-identical error JSON) PLUS phase 2:
+  shared eval context in runAllRoutingChecks (7 connMap builds + 3 segment
+  extractions -> 1 each; optional connMap/segments params on the checks),
+  net-id hoisting in checkPadTraceClearance, spatial pruning for both O(V^2)
+  via-spacing checks (original-order restored, NaN fallback). Verified 2026-07-27:
+  checks suite 130/130, 60-board via fuzz byte-identical, runAllRoutingChecks
+  -43% synthetic / -13% keyboard1, downstream anchors s5/s8 EXACT + simplification
+  captures byte-identical. Regenerate with: bun run build in the clone, then
+  git diff --no-index pristine-dist new-dist (a/ b/ prefixes).
 - bun-circuit-json-to-connectivity-map@0.0.19.patch — areIdsConnected direct
   field access (no behavior change).
 - bun-tiny-hypergraph.patch — computeG load hoisting (bit-identical),
