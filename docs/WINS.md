@@ -61,6 +61,19 @@ perf-audit-2026-07-23.md. Baselines: main @ v0.0.714 (b7b243cc), 64-thread x86, 
      1053687 / s8 1973601 exact, DRC 0/41); 17 predeclared stash fields populated per
      dequeue + self-repopulate guard; single-run walls flat (38.0/96.1s) — effect inside
      noise, gauntlet resolves.
+  9b. **2026-07-27 — RUST GATE A PASSED: the full portfolio core is bit-exact vs the TS
+     solver.** Crate native/portfolio-core (~7,700 lines, 3 parallel port agents + spec,
+     compiled FIRST TRY with zero integration fixes, 26/26 unit tests). Golden parity over
+     srj18 sample 8: **1221 nodes, 76,923 dominant-class candidate solves, 0 winner
+     mismatches, 0 candidate mismatches** (6 golden records proven corrupted by a torn SAB
+     header read in the TS capture transport itself — census-verified, tightly-guarded
+     ARTIFACT skips in the comparator). Two systematic divergences found+fixed en route:
+     (a) naive floor(x+0.5) ≠ engine Math.round in the 1-ulp window (both engines probed);
+     (b) recorded budgets are ToInt32-truncated by the replay transport's Int32 SAB slot
+     while in-solver budgets stay fractional — record boundary now mirrors it (was 37,398
+     mismatches). Latent TS-side fix noted: atomic publication order in
+     portfolioReplayWorker.writeHeader. NEXT: Gate B — wire TS_NATIVE_PORTFOLIO, HD-stage
+     timing at 8 threads, ≥1.3x bar or negative-result-and-stop.
   9. **RUST GATE-A MACHINERY PROVEN (9b8eef54): replay-parity core, 1222/1222 nodes /
      91,650 candidates / 0 mismatches on srj18 sample 8.** Zero-dep Rust cdylib mirrors
      the verified P2 replay winner selection (per-line citations); RPLYDS01 dataset format
