@@ -5,6 +5,7 @@ import {
   checkSameNetViaSpacing,
   checkTracesAreContiguous,
   checkViaTraceClearance,
+  getTraceSegments,
 } from "@tscircuit/checks"
 import type {
   AnyCircuitElement,
@@ -137,9 +138,16 @@ export const getDrcErrors = (
     options.viaClearance ?? MIN_VIA_TO_VIA_CLEARANCE,
     MIN_VIA_TO_VIA_CLEARANCE,
   )
+  // The three segment-consuming checks accept pre-extracted trace segments,
+  // so extract once per evaluation — from whatever circuit json this call
+  // received (full, or pruned on the incremental delta path) — instead of
+  // each check re-extracting internally. Extraction reads only route
+  // geometry, which no check mutates, so sharing is order-independent.
+  const traceSegments = getTraceSegments(circuitJson)
   const traceErrors = checkEachPcbTraceNonOverlapping(circuitJson, {
     connMap,
     minClearance: options.traceClearance,
+    segments: traceSegments,
   })
   if (DRC_EVAL_STATS_ENABLED) {
     const now = performance.now()
@@ -152,6 +160,7 @@ export const getDrcErrors = (
     ? checkViaTraceClearance(circuitJson, {
         connMap,
         minClearance: options.traceClearance,
+        segments: traceSegments,
       })
     : []
   if (DRC_EVAL_STATS_ENABLED) {
@@ -163,6 +172,7 @@ export const getDrcErrors = (
     ? checkPadTraceClearance(circuitJson, {
         connMap,
         minClearance: options.traceClearance,
+        segments: traceSegments,
       })
     : []
   if (DRC_EVAL_STATS_ENABLED) {
