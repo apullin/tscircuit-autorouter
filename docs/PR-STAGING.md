@@ -4,6 +4,11 @@
 - PR 2: https://github.com/tscircuit/math-utils/pull/44 (perf, stacked on #43)
 - PR 3: https://github.com/tscircuit/tscircuit-autorouter/pull/1776 (growth cap)
 - Issues below remain DRAFTED, not filed — still user-triggered.
+- 2026-07-28: downstream visual-snapshot verification of all 3 PRs is DONE and
+  clean — core suite identical-green (0 snapshot diffs), meta 3/3, c2s
+  unaffected by construction, #1776 param unused downstream. Full method +
+  numbers: `perf-artifacts/pr-staging/downstream-verification.md` (talking
+  points for the PR threads).
 
 Everything below is fully prepared (branches pushed to the apullin forks, bodies
 written, tests green) but deliberately not opened: submitting publishes under
