@@ -160,8 +160,9 @@ perf-artifacts/kernel-inventory.md (accelerator analysis).
       setsid; a session crash killed it once). Lesson: staggered starts break load symmetry → run2 noisy.
 - [ ] **F4. Automate the Tier-1 subset as a one-command A/B** (`--sample-numbers 5,8,10`) with
       before/after table output. Currently hand-assembled per agent.
-- [x] ~~F5. Consider upstreaming the perf work as PRs~~ — **2026-07-26: STAGED, awaiting user
-      trigger.** Three PRs (math-utils correctness, math-utils perf, autorouter growth-cap fix) and
+- [x] ~~F5. Consider upstreaming the perf work as PRs~~ — **2026-07-28: 3 PRs OPENED**
+      (math-utils #43 colinear fix, #44 perf stacked on it; autorouter #1776 growth cap).
+      3 issues remain drafted, not filed.** Original staging note (2026-07-26):** Three PRs (math-utils correctness, math-utils perf, autorouter growth-cap fix) and
       three issues (failure-cache key, cross-node margin, scaleRoute thickness) are one-command
       ready in PR-STAGING.md + perf-artifacts/pr-staging/. Branch hazard fixed: PR 2 must come from
       perf/parametric-segment-distance (contains the fix), NOT perf/geometry-hot-path. The stack
